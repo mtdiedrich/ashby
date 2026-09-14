@@ -1,0 +1,10 @@
+node_modules/
+.env
+profile/
+
+# generated state and personal files
+data/
+config/
+!config/me.example.json
+!config/context.template.md
+*.log

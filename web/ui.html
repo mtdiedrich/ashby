@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ashby</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #fff; --ink: #1c1b19; --muted: #6b6862; --line: #e5e1da;
+    --accent: #3b6ea5; --good: #2f7d4f; --warn: #a8641b; --bad: #9c3b3b;
+    --chip: #f0ece5; --hover: #f6f3ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --panel: #1e1f22; --ink: #e8e6e3; --muted: #9a968e; --line: #2e3035;
+      --accent: #7fa8d6; --good: #6cc08a; --warn: #d9a05b; --bad: #d97a7a;
+      --chip: #2a2c30; --hover: #232528;
+    }
+  }
+  * { box-sizing: border-box; }
+  /* .bar sets display:flex, and an author rule beats the UA [hidden] rule whatever
+     its specificity — without this, hiding an element does nothing. */
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 13px/1.45 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 10; background: var(--bg);
+           border-bottom: 1px solid var(--line); padding: 12px 16px 10px; }
+  h1 { margin: 0 0 9px; font-size: 14px; font-weight: 600; }
+  h1 span { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 12px; }
+  .bar { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+         padding: 4px 10px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 12px; }
+  .tab[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  input[type=search] { flex: 1; min-width: 150px; padding: 5px 9px; font: inherit;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+
+  table { border-collapse: collapse; width: 100%; }
+  thead th { position: sticky; top: 71px; z-index: 5; background: var(--bg);
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
+    cursor: pointer; white-space: nowrap; user-select: none; }
+  thead th:hover { color: var(--ink); }
+  thead th .caret { opacity: 0; margin-left: 3px; }
+  thead th.sorted { color: var(--ink); }
+  thead th.sorted .caret { opacity: 1; }
+  tbody tr.r { border-bottom: 1px solid var(--line); cursor: pointer; }
+  tbody tr.r:hover td, tbody tr.r.open td { background: var(--hover); }
+  td { padding: 7px 10px; vertical-align: top; }
+  td.num { font-variant-numeric: tabular-nums; font-weight: 600; width: 58px; }
+  td.num.none { color: var(--muted); font-weight: 400; }
+  .s-hi { color: var(--good); } .s-mid { color: var(--warn); } .s-lo { color: var(--muted); }
+  td.title { font-weight: 600; max-width: 360px; }
+  td.co, td.loc, td.pay, td.date { color: var(--muted); white-space: nowrap; }
+  td.pay.has { color: var(--good); }
+  td.date { font-variant-numeric: tabular-nums; }
+  td.date.stale { color: var(--warn); }
+  td.st { width: 1%; }
+  .state { font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+           padding: 2px 7px; border-radius: 4px; white-space: nowrap; display: inline-block; }
+  .st-queued { background: var(--good); color: #fff; }
+  .st-applied { background: var(--accent); color: #fff; }
+  .st-judged { background: var(--warn); color: #fff; }
+  .st-staged { background: var(--accent); color: #fff; opacity: .65; }
+  .st-unseen { background: var(--chip); color: var(--muted); }
+  .sub { color: var(--muted); font-size: 11px; display: block; font-weight: 400; }
+
+  tr.detail { display: none; }
+  tr.detail.open { display: table-row; }
+  tr.detail td { padding: 4px 16px 18px 24px; border-bottom: 1px solid var(--line);
+                 background: var(--hover); }
+  .panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+           gap: 0 28px; align-items: start; }
+  .pane { min-width: 0; }
+  .pane + .pane { border-left: 1px solid var(--line); padding-left: 28px; }
+  @media (max-width: 1100px) {
+    .panes { grid-template-columns: 1fr; gap: 18px; }
+    .pane + .pane { border-left: 0; padding-left: 0; padding-top: 16px;
+                    border-top: 1px solid var(--line); }
+  }
+  .pane h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+             letter-spacing: .07em; color: var(--muted); font-weight: 600; }
+  .pane h4 + h4, .pane ul + h4, .pane p + h4 { margin-top: 18px; }
+  .why { margin: 0; }
+  ul.concerns { margin: 8px 0 0; padding-left: 17px; color: var(--muted); }
+  ul.reqs { margin: 0; padding: 0; list-style: none; }
+  ul.reqs li { display: grid; grid-template-columns: 30px 1fr; gap: 6px; margin-bottom: 6px; }
+  ul.reqs b { font-variant-numeric: tabular-nums; }
+  .r0 { color: var(--bad); } .r1 { color: var(--warn); } .r2 { color: var(--ink); } .r3 { color: var(--good); }
+  .ev { color: var(--muted); font-size: 12px; display: block; }
+  .desc { white-space: pre-wrap; max-height: 340px; overflow-y: auto;
+          color: var(--muted); font-size: 12px; padding-right: 8px; }
+  .acts { margin-top: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button.act { border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 5px 11px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; }
+  button.act:hover { background: var(--chip); }
+  button.act.primary { background: var(--good); border-color: var(--good); color: #fff; }
+  button.act.drop { color: var(--bad); }
+  a.lnk { color: var(--accent); text-decoration: none; font-size: 12px; }
+  a.lnk:hover { text-decoration: underline; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  #more { display: block; margin: 18px auto 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ashby <span id="stamp"></span></h1>
+  <div class="bar">
+    <button class="tab" data-f="us"     aria-pressed="true">US only</button>
+    <button class="tab" data-f="remote" aria-pressed="false">remote only</button>
+    <button class="tab" data-f="all"    aria-pressed="false">include non-ML titles</button>
+    <button class="tab" data-f="scored" aria-pressed="false">scored only</button>
+    <input type="search" id="q" placeholder="filter by title, company, team…">
+    <button class="tab" id="refresh">refresh</button>
+  </div>
+</header>
+
+<table>
+  <thead>
+    <tr>
+      <th data-s="fitness" class="sorted">fitness <span class="caret">▾</span></th>
+      <th data-s="coverage">coverage <span class="caret">▾</span></th>
+      <th data-s="similarity">similarity <span class="caret">▾</span></th>
+      <th data-s="state">state <span class="caret">▾</span></th>
+      <th data-s="title">title <span class="caret">▾</span></th>
+      <th data-s="slug">company <span class="caret">▾</span></th>
+      <th data-s="location">location <span class="caret">▾</span></th>
+      <th data-s="payNum">pay <span class="caret">▾</span></th>
+      <th data-s="daysLive">days live <span class="caret">▾</span></th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<button class="tab" id="more" hidden>show more</button>
+
+<script>
+let JOBS = [], TOTAL = 0, term = '', sortKey = 'fitness', sortDir = -1, limit = 600;
+const opts = { us: true, remote: false, all: false, scored: false };
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const cls = n => n == null ? 'none' : n >= 0.6 ? 's-hi' : n >= 0.3 ? 's-mid' : 's-lo';
+// A number that has not been computed shows "-", never 0 — they mean different things.
+const num = n => n == null ? '—' : n.toFixed(2);
+
+// "$155K - $245K" -> 245000, so the pay column sorts numerically and blanks sink.
+function parseTop(s) {
+  if (!s) return null;
+  const nums = [...String(s).matchAll(/([\d.]+)\s*([kK])?/g)]
+    .map(m => Number(m[1]) * (m[2] ? 1000 : 1)).filter(n => n > 0);
+  return nums.length ? Math.max(...nums) : null;
+}
+
+async function load() {
+  const q = new URLSearchParams({ limit: String(limit) });
+  for (const k of ['us', 'remote', 'all', 'scored']) if (opts[k]) q.set(k, '1');
+
+  let d;
+  try { d = await (await fetch('/api/board?' + q)).json(); }
+  catch {
+    document.getElementById('rows').innerHTML =
+      '<tr><td colspan="9" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
+    return;
+  }
+
+  JOBS = d.jobs.map(j => ({ ...j, payNum: parseTop(j.pay) }));
+  TOTAL = d.total;
+  document.getElementById('stamp').textContent =
+    d.total + ' postings · ' + d.counts.fitness + ' fitness · ' + d.counts.coverage +
+    ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.queued + ' queued';
+  const more = document.getElementById('more');
+  more.hidden = JOBS.length >= TOTAL;
+  more.textContent = 'show more (' + JOBS.length + ' of ' + TOTAL + ')';
+  render();
+}
+
+function visible() {
+  const rows = JOBS.filter(j => !term ||
+    [j.title, j.slug, j.department, j.team, j.location].filter(Boolean).join(' ').toLowerCase().includes(term));
+  rows.sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    // Nulls always sink, whichever way the column is sorted.
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
+    return c * sortDir;
+  });
+  return rows;
+}
+
+function render() {
+  const rows = visible();
+  const body = document.getElementById('rows');
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="9" class="empty">nothing here</td></tr>'; return; }
+
+  body.innerHTML = rows.map(j => {
+    const cov = j.coverage == null ? '—'
+      : j.coverage.toFixed(2) + '<span class="sub">' + j.met + '/' + j.reqTotal + '</span>';
+
+    const fitPane = j.fitness == null
+      ? '<p class="meta">Not judged yet — send it to the scorers, then run <b>node fitness.js</b>.</p>'
+      : '<p class="why">' + esc(j.why) + '</p>' +
+        (j.concerns.length ? '<ul class="concerns">' + j.concerns.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>' : '');
+
+    const covPane = j.coverage == null
+      ? '<p class="meta">No requirement breakdown yet — run <b>node coverage.js</b>.</p>'
+      : '<ul class="reqs">' + j.requirements.filter(r => r.kind !== 'logistics').map(r =>
+          '<li><b class="r' + r.score + '">' + r.score + '/3</b><span>' + esc(r.text) +
+          '<span class="ev">' + esc(r.evidence) + '</span></span></li>').join('') + '</ul>' +
+        (j.constraints.length
+          ? '<p class="meta" style="margin-top:10px">check yourself: ' + j.constraints.map(esc).join('; ') + '</p>'
+          : '');
+
+    const act = j.state === 'applied'
+      ? '<span class="meta">already opened in apply.js</span>'
+      : j.state === 'queued'
+        ? '<button class="act drop" data-q="0">remove from queue</button>'
+        : '<button class="act primary" data-q="1">queue for application</button>';
+    const stageBtn = j.state === 'staged'
+      ? '<span class="meta">staged for the next scorer run</span>'
+      : (j.fitness == null || j.coverage == null)
+        ? '<button class="act" data-stage="1">send to scorers</button>' : '';
+
+    return '<tr class="r" data-id="' + esc(j.id) + '">' +
+        '<td class="num ' + cls(j.fitness) + '">' + num(j.fitness) + '</td>' +
+        '<td class="num ' + cls(j.coverage) + '">' + cov + '</td>' +
+        '<td class="num ' + (j.similarity == null ? 'none' : '') + '">' +
+          (j.similarity == null ? '—' : j.similarity.toFixed(3)) + '</td>' +
+        '<td class="st"><span class="state st-' + j.state + '">' + j.state + '</span></td>' +
+        '<td class="title">' + esc(j.title) + '</td>' +
+        '<td class="co">' + esc(j.slug) + '</td>' +
+        '<td class="loc">' + esc(j.location || '?') + '</td>' +
+        '<td class="pay' + (j.pay ? ' has' : '') + '">' + esc(j.pay || '—') + '</td>' +
+        '<td class="date' + (j.daysLive > 90 ? ' stale' : '') + '">' +
+          (j.daysLive == null ? '—' : j.daysLive) + '</td>' +
+      '</tr>' +
+      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="9">' +
+        '<div class="panes">' +
+          '<div class="pane">' +
+            '<h4>Fitness — should I apply</h4>' + fitPane +
+            '<h4>Coverage — what I can demonstrate</h4>' + covPane +
+            '<div class="acts">' + act + stageBtn +
+              (j.applyUrl ? '<a class="lnk" href="' + esc(j.applyUrl) + '" target="_blank" rel="noopener">application ↗</a>' : '') +
+              (j.jobUrl ? '<a class="lnk" href="' + esc(j.jobUrl) + '" target="_blank" rel="noopener">posting ↗</a>' : '') +
+            '</div>' +
+            '<div class="acts"><span class="meta">' + esc(j.department || '?') + ' / ' + esc(j.team || '?') +
+              ' · ' + esc(j.workplaceType || '?') + ' · ' + esc(j.employmentType || '?') +
+              (j.judgedAt ? ' · judged ' + esc(j.judgedAt.slice(0, 10)) + ' by ' + esc(j.fitnessModel || '?') : '') +
+            '</span></div>' +
+          '</div>' +
+          '<div class="pane"><h4>Job description</h4>' +
+            '<div class="desc">' + esc(j.description || '(not stored)') + '</div>' +
+          '</div>' +
+        '</div>' +
+      '</td></tr>';
+  }).join('');
+}
+
+document.getElementById('rows').addEventListener('click', async (e) => {
+  const holder = e.target.closest('tr.detail') || e.target.closest('tr.r');
+  const id = holder?.dataset.for ?? holder?.dataset.id;
+
+  const qb = e.target.closest('button[data-q]');
+  if (qb) {
+    qb.disabled = true;
+    await fetch('/api/queue', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id, queued: qb.dataset.q === '1' }) });
+    return load();
+  }
+  const sb = e.target.closest('button[data-stage]');
+  if (sb) {
+    sb.disabled = true; sb.textContent = 'sending…';
+    await fetch('/api/stage', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }) });
+    return load();
+  }
+  if (e.target.closest('a')) return;
+  const r = e.target.closest('tr.r');
+  if (!r) return;
+  r.classList.toggle('open');
+  document.querySelector('tr.detail[data-for="' + CSS.escape(r.dataset.id) + '"]')?.classList.toggle('open');
+});
+
+for (const th of document.querySelectorAll('thead th[data-s]')) {
+  th.addEventListener('click', () => {
+    const k = th.dataset.s;
+    if (sortKey === k) sortDir = -sortDir;
+    else { sortKey = k; sortDir = ['fitness', 'coverage', 'similarity', 'payNum', 'daysLive'].includes(k) ? -1 : 1; }
+    for (const o of document.querySelectorAll('thead th')) o.classList.remove('sorted');
+    th.classList.add('sorted');
+    th.querySelector('.caret').textContent = sortDir === -1 ? '▾' : '▴';
+    render();
+  });
+}
+for (const t of document.querySelectorAll('.tab[data-f]')) {
+  t.addEventListener('click', () => {
+    const k = t.dataset.f;
+    opts[k] = !opts[k];
+    if (opts[k] && k === 'us') opts.remote = false;
+    if (opts[k] && k === 'remote') opts.us = false;
+    for (const o of document.querySelectorAll('.tab[data-f]')) o.setAttribute('aria-pressed', String(!!opts[o.dataset.f]));
+    limit = 600;
+    load();
+  });
+}
+document.getElementById('q').addEventListener('input', e => { term = e.target.value.toLowerCase().trim(); render(); });
+document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('more').addEventListener('click', () => { limit += 1000; load(); });
+
+load();
+</script>
+</body>
+</html>

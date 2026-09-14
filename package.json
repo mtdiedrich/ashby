@@ -1,0 +1,28 @@
+{
+  "name": "ashby",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "poll": "node bin/poll.js",
+    "fitness": "node bin/fitness.js",
+    "coverage": "node bin/coverage.js",
+    "similarity": "node bin/crawl.js && node bin/embed.js",
+    "ui": "node bin/ui.js",
+    "apply": "node bin/apply.js",
+    "show": "node bin/show.js",
+    "match": "node bin/match.js",
+    "gaps": "node bin/gaps.js",
+    "harvest": "node bin/harvest.js",
+    "test-fill": "node bin/test-fill.js",
+    "check-docs": "node bin/check-docs.js",
+    "crawl": "node bin/crawl.js",
+    "embed": "node bin/embed.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.125.0",
+    "dotenv": "^17.2.3",
+    "playwright": "^1.56.0",
+    "zod": "^4.6.5"
+  }
+}
