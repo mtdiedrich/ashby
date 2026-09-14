@@ -1,128 +1,82 @@
-// Stage 1 — poll every board in slugs.txt, emit postings we have not judged before.
+// Stage 1 — refresh the corpus, then stage today's candidates for scoring.
 //
-//   node poll.js           normal daily run
-//   node poll.js --seed    mark everything currently posted as seen, write nothing
-//   node poll.js --rejudge ignore seen.json and re-emit every current match
-//                          (use after changing the filters below)
+//   npm run poll                normal daily run
+//   npm run poll -- --no-crawl  select from the corpus as it stands, fetch nothing
+//   npm run poll -- --all       ignore the title filter
+//   npm run poll -- --anywhere  ignore the location filter
+//   npm run poll -- --limit 20  stage at most N
+//   npm run poll -- --dry       show what would be staged, write nothing
+//
+// This used to be a second fetcher with its own filters and its own store. It is not
+// any more: crawl.js pulls every board into corpus.jsonl and this picks from it.
+//
+// "New" is derived, not tracked. A posting is a candidate when nothing has judged it
+// (fitness.jsonl, coverage.jsonl), nothing has staged it (fresh.jsonl), and you have
+// not dismissed it (dismissed.jsonl). There is no seen.json to drift out of step.
 
 import fs from 'node:fs';
-import { P } from '../lib/paths.js';
-import { payPasses } from '../lib/comp.js';
+import { spawnSync } from 'node:child_process';
+import { P, ensureDirs } from '../lib/paths.js';
+import { corpus } from '../lib/corpus.js';
+import { candidates } from '../lib/select.js';
 import { minimumBase, constraintLines } from '../lib/constraints.js';
-import { tidy } from '../lib/text.js';
-import { wantedTitle, usLocation } from '../lib/filters.js';
 
-// ---- filters -------------------------------------------------------------
-const MIN_PAY = minimumBase();                 // USD/year, annualised — read from context.md
+const argv    = process.argv.slice(2);
+const NOCRAWL = argv.includes('--no-crawl');
+const DRY     = argv.includes('--dry');
+const ALL     = argv.includes('--all');
+const ANYWHERE = argv.includes('--anywhere');
+const LIMIT   = argv.includes('--limit') ? Number(argv[argv.indexOf('--limit') + 1]) : Infinity;
+
 // Drop postings older than this many days. 0 disables it.
-// Freshness otherwise comes from seen.json (new = not judged before), which is
-// enough for a daily run — but every time you add slugs, that company's entire
-// back catalogue arrives at once, and a role that has been open 5 months is
-// usually evergreen, backfilled, or hard to fill for a reason.
+// Adding boards is when this matters: a newly discovered company arrives with its
+// entire back catalogue, and a role open five months is usually evergreen.
 const MAX_AGE_DAYS = 0;
-// Named non-US places. A "Remote" posting still has a region in practice, and
-// "Remote - European Union" is not a job you can take from Iowa.
-const BLOCK_LOC = /\b(tokyo|japan|seoul|korea|singapore|delhi|india|bangalore|abu dhabi|dubai|uae|london|uk\b|united kingdom|dublin|ireland|paris|france|berlin|munich|germany|amsterdam|netherlands|zurich|switzerland|stockholm|sweden|oslo|norway|copenhagen|denmark|madrid|barcelona|spain|milan|rome|italy|warsaw|poland|lisbon|portugal|tel aviv|israel|sydney|melbourne|australia|toronto|vancouver|canada|são paulo|brazil|mexico city|european union|europe|european|emea|apac|latam|remote - eu)\b/i;
-// -------------------------------------------------------------------------
 
-const CONCURRENCY = 6;
-const SEED    = process.argv.includes('--seed');
-const REJUDGE = process.argv.includes('--rejudge');
+ensureDirs();
 
-const slugs = [...new Set(
-  fs.readFileSync(P.slugs, 'utf8').split('\n').map(s => s.trim().toLowerCase()).filter(Boolean)
-)];
+const read = f => fs.existsSync(f)
+  ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
+  : [];
 
-// seen.json: { "<posting id>": "<iso date first observed>" }
-const seen = fs.existsSync(P.seen) ? JSON.parse(fs.readFileSync(P.seen, 'utf8')) : {};
-const today = new Date().toISOString();
-
-const fresh = [];
-let ok = 0, dead = 0, scanned = 0;
-
-if (!SEED) {
-  console.log(`pay floor: ${MIN_PAY ? '$' + MIN_PAY.toLocaleString() + '/yr (from context.md)' : 'none'}` +
-              (MAX_AGE_DAYS > 0 ? ` · max age: ${MAX_AGE_DAYS}d` : ''));
-  for (const l of constraintLines()) console.log(`  ${l}`);
+if (!NOCRAWL) {
+  const r = spawnSync(process.execPath, [new URL('./crawl.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')],
+    { stdio: 'inherit' });
+  if (r.status !== 0) { console.error('crawl failed — selecting from the corpus as it stands'); }
   console.log();
 }
 
-async function pollSlug(slug) {
-  const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(slug)}?includeCompensation=true`;
-  let jobs;
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-    if (!r.ok) { dead++; if (r.status !== 404) console.warn(`  ✗ ${slug} HTTP ${r.status}`); return; }
-    ({ jobs = [] } = await r.json());
-  } catch (e) { dead++; console.warn(`  ✗ ${slug} ${e.message}`); return; }
+const minPay = minimumBase();
+console.log(`pay floor: ${minPay ? '$' + minPay.toLocaleString() + '/yr (from context.md)' : 'none'}` +
+            (MAX_AGE_DAYS > 0 ? ` · max age: ${MAX_AGE_DAYS}d` : ''));
+for (const l of constraintLines()) console.log(`  ${l}`);
+console.log();
 
-  ok++; scanned += jobs.length;
+const store = corpus();
+const judged = new Set([...read(P.fitness).map(r => r.id), ...read(P.coverage).map(r => r.id)]);
+const staged = new Set(read(P.fresh).map(r => r.id));
+const dismissed = new Set(read(P.dismissed).map(r => r.id));
 
-  for (const j of jobs) {
-    const known = j.id in seen;
-    if (known && !REJUDGE) continue;
-    if (!known) seen[j.id] = today;
-    if (SEED) continue;
+const picked = candidates(store, {
+  judged, staged, dismissed,
+  us: !ANYWHERE, all: ALL, minPay, maxAgeDays: MAX_AGE_DAYS,
+}).slice(0, LIMIT);
 
-    if (!wantedTitle(j.title)) continue;
+console.log(`${store.size} postings in the corpus · ${judged.size} judged · ${staged.size} already staged` +
+            (dismissed.size ? ` · ${dismissed.size} dismissed` : ''));
+console.log(`${picked.length} new candidate${picked.length === 1 ? '' : 's'}\n`);
 
-    const locs = [j.location, ...(j.secondaryLocations ?? []).map(l => l.location)].filter(Boolean).join(' | ');
-
-    // Coarse net: anywhere in the US, remote or not. Whether an onsite role in
-    // San Francisco is actually takeable is a judgement against the candidate's
-    // constraints, and score.js makes it with the full posting in hand — this
-    // filter only exists to keep Seoul and London out of the scoring bill.
-    //
-    // Note isRemote is useless for this: it is true on Hybrid postings too (68 of
-    // one 92-posting sample were workplaceType "Hybrid" with isRemote true), which
-    // is why the abroad check reads the location text rather than trusting a flag.
-    // The primary location decides. Testing the combined string lets a London or
-    // Toronto role through on the strength of a US city in secondaryLocations —
-    // that is where the job is *also* hiring, not where this posting sits.
-    if (!usLocation(j.location, locs)) continue;
-
-    if (MAX_AGE_DAYS > 0 && j.publishedAt) {
-      const ageDays = (Date.now() - new Date(j.publishedAt)) / 86_400_000;
-      if (ageDays > MAX_AGE_DAYS) continue;
-    }
-
-    const pay = payPasses(j, MIN_PAY);
-    if (!pay.pass) continue;
-
-    fresh.push({
-      slug, id: j.id, title: j.title,
-      department: j.department, team: j.team,
-      location: j.location, secondaryLocations: locs,
-      isRemote: j.isRemote, workplaceType: j.workplaceType,
-      employmentType: j.employmentType, publishedAt: j.publishedAt,
-      jobUrl: j.jobUrl, applyUrl: j.applyUrl,
-      salary: pay.salary, payKnown: pay.known,
-      descriptionPlain: tidy(j.descriptionPlain),
-    });
-  }
+for (const j of picked.slice(0, 40)) {
+  console.log(`  ${j.title}  —  ${j.slug}  —  ${j.location}` +
+    `${j.salary ? '  —  ' + j.salary.summary : '  —  (no pay stated)'}`);
 }
+if (picked.length > 40) console.log(`  … and ${picked.length - 40} more`);
 
-// Simple worker pool — 6 in flight is polite and finishes 2k slugs in ~2 min.
-const queue = slugs.slice();
-await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
-  while (queue.length) await pollSlug(queue.shift());
-}));
+if (DRY) { console.log('\n--dry, nothing staged'); process.exit(0); }
 
-fs.writeFileSync(P.seen, JSON.stringify(seen, null, 0));
-
-if (SEED) {
-  console.log(`seeded: ${Object.keys(seen).length} postings marked seen across ${ok} boards (${dead} dead)`);
+if (picked.length) {
+  fs.appendFileSync(P.fresh, picked.map(j => JSON.stringify(j)).join('\n') + '\n');
+  console.log(`\nstaged in fresh.jsonl · next: npm run fitness`);
 } else {
-  // fresh.jsonl is a work queue that score.js truncates once consumed. postings.jsonl
-  // is the durable copy — full record, description included — so a scored posting can
-  // still be read back later without re-fetching the board.
-  if (fresh.length) {
-    const lines = fresh.map(j => JSON.stringify(j)).join('\n') + '\n';
-    fs.appendFileSync(P.fresh, lines);
-    fs.appendFileSync(P.postings, lines);
-  }
-  console.log(`${ok} boards ok, ${dead} dead, ${scanned} postings scanned → ${fresh.length} new matches`);
-  for (const j of fresh) {
-    console.log(`  ${j.title}  —  ${j.slug}  —  ${j.location}${j.salary ? '  —  ' + j.salary.summary : '  —  (no pay stated)'}`);
-  }
+  console.log('\nnothing new to stage');
 }

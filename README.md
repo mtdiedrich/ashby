@@ -312,7 +312,7 @@ it's sent as a document on every call, so there's nothing to regenerate.
 | Command | What it does |
 |---|---|
 | `npm run harvest` | Validate candidate slugs from `raw.txt`, merge into `slugs.txt`, 404s to `dead.txt`. Takes filenames as arguments; `--no-recheck` skips re-validating known slugs. |
-| `npm run poll` | Poll every board, apply filters, emit postings not judged before. `--seed` marks everything seen without emitting. `--rejudge` re-emits every current match, for after you change the filters. |
+| `npm run poll` | Refresh the corpus, then stage candidates into `fresh.jsonl`: anything matching your filters that nothing has judged, staged, or dismissed. `--no-crawl` skips the fetch, `--dry` shows without staging, `--all` ignores the title filter, `--anywhere` the location filter, `--limit N` caps it. |
 | `npm run fitness` | Judge `fresh.jsonl` against your resume and `context.md` — a holistic 0-1 **fitness**, with reasoning. Appends to `fitness.jsonl` and truncates `fresh.jsonl`; `--keep` leaves it, for re-runs. |
 | `npm run coverage` | Extract each posting's requirements and score the resume against them one by one, for a **coverage** number and a gap list. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`. |
 | `npm run gaps` | Aggregate coverage across postings — what you keep missing. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
@@ -324,6 +324,7 @@ it's sent as a document on every call, so there's nothing to regenerate.
 | `npm run crawl` | Pipeline 2. Every posting on every board, unfiltered, into `corpus.jsonl`. `--stats` reports what's stored. |
 | `npm run embed` | Embed anything new or changed, plus the resume. `--dry` prices it first, `--force` re-embeds everything. |
 | `npm run match` | Rank the corpus by similarity to your resume. `--top N`, `--us`, `--remote`, `--company <slug>`, `--min 0.4`, `--json`. `--to-fresh` writes results into `fresh.jsonl` for `fitness.js`. `--all` skips the title filter; `--raw` uses uncentred cosine, for comparison. |
+| `npm test` | Run the test suite — Node's built-in runner over `test/`. No dependencies. |
 | `npm run check-docs` | Fails if this README has drifted from the code — an undocumented script, flag, or data file. |
 
 ### Scheduling
@@ -419,13 +420,12 @@ nothing about seniority, pay, or your hard constraints. Its value is recall.
 | File | What it is |
 |---|---|
 | `slugs.txt` | Validated Ashby board slugs. Grows; never shrinks. |
-| `seen.json` | Posting ids `poll.js` has already judged. |
 | `fresh.jsonl` | Work queue: polled, not yet scored. Truncated by `fitness.js`. |
-| `postings.jsonl` | Durable copy of everything `poll.js` emitted, descriptions included. |
 | `fitness.jsonl` | **The log.** One line per judgement, append-only, re-scores included. Never pruned. |
 | `queue.jsonl` | What you picked in the UI. The only input to `apply.js`. |
 | `log.jsonl` | One line per apply attempt: what the rules filled, what the model planned, what failed. |
-| `corpus.jsonl` | Pipeline 2. Every posting, unfiltered. |
+| `corpus.jsonl` | **Every posting from every board**, unfiltered. The only store of postings. |
+| `dismissed.jsonl` | Postings you said no to in the UI, so `poll` stops proposing them. |
 | `vectors.jsonl` | Pipeline 2. Embeddings, keyed by content hash. |
 | `coverage.jsonl` | Per-requirement scores and evidence, from `coverage.js`. |
 | `requirements.jsonl` | Requirements extracted per posting, cached by posting hash. |

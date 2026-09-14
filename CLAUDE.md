@@ -36,6 +36,28 @@ Specifically keep in sync:
 - the **Files** table — one row per file the pipelines read or write
 - the **Daily use** section — the actual current workflow, not a historical one
 
+## Tests come first
+
+This project uses TDD. `npm test` runs Node's built-in test runner over `test/` —
+no framework, no dependency.
+
+**Write the failing test before the implementation.** When changing behaviour, the
+test that would have caught the old behaviour goes in first. When fixing a bug, the
+test reproducing it goes in first.
+
+Tests must not touch real data. `test/helpers.js` gives each test a temp `ASHBY_HOME`;
+`lib/paths.js` resolves every path lazily so that redirection works. **Never capture a
+path at module load** (`const FILE = P.context`) — resolve it per call (`P.context`
+inside the function). A captured path cannot be redirected and the suite cannot see it.
+
+Run `npm test` before reporting work finished.
+
+## Never import a script to inspect it
+
+ESM executes on import. `import('../bin/coverage.js')` runs the scorer and spends
+money. To check a script loads, run it with a harmless flag (`--dry`, `--show`,
+`--stats`) or `node --check`. This has already cost an unasked-for $0.58.
+
 ## Shell
 
 Windows PowerShell 5.1. **No `&&`** — chain with `;`, or `; if ($?) { ... }` for

@@ -28,7 +28,7 @@ const FULL    = flags.has('--full');
 const WHY     = flags.has('--why');
 const HISTORY = flags.has('--history');
 
-const postings = new Map(read(P.postings).map(p => [p.id, p]));
+const postings = new Map(read(P.corpus).map(p => [p.id, p]));
 const queued   = new Set(read(P.queue).map(r => r.id));
 const applied  = new Set(read(P.log).map(r => r.job));
 

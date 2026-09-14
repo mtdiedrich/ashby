@@ -69,26 +69,25 @@ function vectors() {
 /** Every posting we know about, with whichever of the three numbers exist. */
 function board({ all = false, us = false, remote = false, scoredOnly = false, limit = 600 } = {}) {
   const corp = corpus();
-  const polled = new Map(read(P.postings).map(p => [p.id, p]));
 
   const fit = newestById(read(P.fitness), 'scoredAt');
   const cov = newestById(read(P.coverage), 'at');
   const queued = new Set(read(P.queue).map(r => r.id));
   const applied = new Set(read(P.log).map(r => r.job));
   const staged = new Set(read(P.fresh).map(r => r.id));
+  const dismissed = new Set(read(P.dismissed).map(r => r.id));
 
   const v = vectors();
   const resumeV = v?.stored?.has('resume') ? vec.centre(v.stored.get('resume').v, v.mu) : null;
 
-  // The corpus is everything crawl.js has seen; postings.jsonl is what poll.js
-  // emitted. Usually the first contains the second, but not if only one has run.
-  const ids = new Set([...corp.keys(), ...polled.keys()]);
+  // corpus.jsonl is the only store of postings now.
+  const ids = new Set(corp.keys());
 
   const rows = [];
   for (const id of ids) {
     const c = corp.get(id);
-    const p = c ? asPosting(c, null, salaryOf) : polled.get(id);
-    if (!p) continue;
+    if (!c) continue;
+    const p = asPosting(c, null, salaryOf);
 
     if (!all && !wantedTitle(p.title)) continue;
     if (remote && p.workplaceType !== 'Remote') continue;
@@ -113,7 +112,7 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
       applyUrl: p.applyUrl ?? null,
       jobUrl: p.jobUrl ?? null,
       pay: p.salary?.summary ?? f?.salary?.summary ?? null,
-      description: tidy(c?.description ?? p.descriptionPlain ?? ''),
+      description: tidy(c.description ?? ''),
 
       // null, not 0 — "not computed" and "computed as zero" are different facts.
       fitness: f ? (f.fitness ?? f.score ?? null) : null,
@@ -132,7 +131,8 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
       similarity: sv ? vec.dot(resumeV, vec.centre(sv.v, v.mu)) : null,
 
       state: applied.has(id) ? 'applied' : queued.has(id) ? 'queued'
-           : staged.has(id) ? 'staged' : (f || k) ? 'judged' : 'unseen',
+           : dismissed.has(id) ? 'dismissed' : staged.has(id) ? 'staged'
+           : (f || k) ? 'judged' : 'unseen',
     });
   }
 
@@ -158,13 +158,21 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
 /** Stage a posting into fresh.jsonl so fitness.js / coverage.js pick it up next run. */
 function stage(id) {
   const c = corpus().get(id);
-  const rec = c ? asPosting(c, null, salaryOf) : read(P.postings).find(r => r.id === id);
+  const c2 = corpus().get(id);
+  const rec = c2 ? asPosting(c2, null, salaryOf) : null;
   if (!rec) return { ok: false, error: 'not in corpus or postings.jsonl' };
   if (read(P.fresh).some(r => r.id === id)) return { ok: true, already: true };
 
   const line = JSON.stringify(rec) + '\n';
   fs.appendFileSync(P.fresh, line);
-  if (!read(P.postings).some(r => r.id === id)) fs.appendFileSync(P.postings, line);
+  return { ok: true };
+}
+
+/** Say no to a posting so poll stops proposing it. Replaces the old seen.json. */
+function setDismissed(id, wanted) {
+  const rows = read(P.dismissed).filter(r => r.id !== id);
+  if (wanted) rows.push({ id, at: new Date().toISOString() });
+  writeJsonl(P.dismissed, rows);
   return { ok: true };
 }
 
@@ -181,7 +189,7 @@ function setQueued(id, wanted) {
   const judged = read(P.fitness).filter(r => r.id === id)
     .sort((a, b) => (a.scoredAt ?? '').localeCompare(b.scoredAt ?? '')).pop();
   const c = corpus().get(id);
-  const row = judged ?? (c ? asPosting(c, null, salaryOf) : read(P.postings).find(r => r.id === id));
+  const row = judged ?? (c ? asPosting(c, null, salaryOf) : null);
   if (!row) return { ok: false, error: 'nothing on record for that posting' };
 
   writeJsonl(P.queue, [...queue, row]);
@@ -215,6 +223,12 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'POST' && req.url === '/api/queue') {
     readBody().then(({ id, queued }) => send(200, 'application/json', JSON.stringify(setQueued(id, !!queued))))
+              .catch(e => send(400, 'application/json', JSON.stringify({ ok: false, error: e.message })));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/dismiss') {
+    readBody().then(({ id, dismissed }) => send(200, 'application/json', JSON.stringify(setDismissed(id, !!dismissed))))
               .catch(e => send(400, 'application/json', JSON.stringify({ ok: false, error: e.message })));
     return;
   }

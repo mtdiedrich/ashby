@@ -44,12 +44,13 @@ for (const s of scripts) {
 // ---- data files documented ----------------------------------------------
 // Anything a script reads or writes by literal name.
 const dataFiles = new Set();
+const RETIRED = new Set(['postings.jsonl', 'seen.json']);
 const allSrc = [...scripts.map(f => 'bin/' + f), ...fs.readdirSync(at('lib')).filter(f => f.endsWith('.js')).map(f => 'lib/' + f)];
 for (const s of allSrc) {
   const src = fs.readFileSync(at(s), 'utf8');
   for (const m of src.matchAll(/'([a-z][a-z0-9.-]*\.(?:jsonl|json|txt))'/g)) {
     const f = m[1];
-    if (f.endsWith('package.json') || f === 'launch.json') continue;
+    if (f.endsWith('package.json') || f === 'launch.json' || RETIRED.has(f)) continue;
     dataFiles.add(f);
   }
 }

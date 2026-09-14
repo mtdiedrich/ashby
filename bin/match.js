@@ -79,7 +79,7 @@ if (TO_FRESH) {
   const lines = shown.map(({ score, p }) => JSON.stringify(asPosting(p, score, salaryOf))).join('\n') + '\n';
   fs.appendFileSync(P.fresh, lines);
   // postings.jsonl too, or the UI has no description to show for these later.
-  fs.appendFileSync(P.postings, lines);
+  fs.appendFileSync(P.corpus, lines);
   console.log(`${shown.length} postings written to fresh.jsonl and postings.jsonl\n\nNext: npm run fitness`);
   process.exit(0);
 }

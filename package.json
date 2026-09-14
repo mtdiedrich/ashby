@@ -17,7 +17,9 @@
     "test-fill": "node bin/test-fill.js",
     "check-docs": "node bin/check-docs.js",
     "crawl": "node bin/crawl.js",
-    "embed": "node bin/embed.js"
+    "embed": "node bin/embed.js",
+    "test": "node --test test/",
+    "test:watch": "node --test --watch test/"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

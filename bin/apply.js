@@ -16,7 +16,7 @@ import readline from 'node:readline';
 import { chromium } from 'playwright';
 import { z } from 'zod';
 import { ask, context, MODEL } from '../lib/ai.js';
-import { resumeBlock, RESUME_PATH } from '../lib/resume.js';
+import { resumeBlock, resumeFile } from '../lib/resume.js';
 
 const argv     = process.argv.slice(2);
 const NO_MODEL = argv.includes('--no-model');
@@ -28,7 +28,7 @@ const FILL_SRC = fs.readFileSync(new URL('../lib/fill.browser.js', import.meta.u
 if (!fs.existsSync(P.me)) { console.error('me.json not found — copy me.example.json and fill it in.'); process.exit(1); }
 const ME = JSON.parse(fs.readFileSync(P.me, 'utf8'));
 
-if (!fs.existsSync(RESUME_PATH)) { console.error(`${RESUME_PATH} not found.`); process.exit(1); }
+if (!fs.existsSync(resumeFile())) { console.error(`${resumeFile()} not found.`); process.exit(1); }
 
 let queue;
 if (ONE_URL) {
@@ -115,7 +115,7 @@ for (const [i, job] of queue.entries()) {
     // second file input for a cover letter, and the bare selector picks the wrong one.
     const resumeInput = page.locator('[data-field-path="_systemfield_resume"] input[type=file]').first();
     if (await resumeInput.count()) {
-      await resumeInput.setInputFiles(RESUME_PATH);
+      await resumeInput.setInputFiles(resumeFile());
       // Ashby parses the resume server-side and backfills name/email; give it a
       // moment, then wait for the name field to actually populate.
       await page.waitForFunction(

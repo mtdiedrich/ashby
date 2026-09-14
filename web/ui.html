@@ -62,6 +62,7 @@
   .st-judged { background: var(--warn); color: #fff; }
   .st-staged { background: var(--accent); color: #fff; opacity: .65; }
   .st-unseen { background: var(--chip); color: var(--muted); }
+  .st-dismissed { background: transparent; color: var(--muted); border: 1px solid var(--line); }
   .sub { color: var(--muted); font-size: 11px; display: block; font-weight: 400; }
 
   tr.detail { display: none; }
@@ -216,6 +217,9 @@ function render() {
       : j.state === 'queued'
         ? '<button class="act drop" data-q="0">remove from queue</button>'
         : '<button class="act primary" data-q="1">queue for application</button>';
+    const dismissBtn = j.state === 'dismissed'
+      ? '<button class="act" data-dismiss="0">un-dismiss</button>'
+      : '<button class="act" data-dismiss="1">not interested</button>';
     const stageBtn = j.state === 'staged'
       ? '<span class="meta">staged for the next scorer run</span>'
       : (j.fitness == null || j.coverage == null)
@@ -239,7 +243,7 @@ function render() {
           '<div class="pane">' +
             '<h4>Fitness — should I apply</h4>' + fitPane +
             '<h4>Coverage — what I can demonstrate</h4>' + covPane +
-            '<div class="acts">' + act + stageBtn +
+            '<div class="acts">' + act + stageBtn + dismissBtn +
               (j.applyUrl ? '<a class="lnk" href="' + esc(j.applyUrl) + '" target="_blank" rel="noopener">application ↗</a>' : '') +
               (j.jobUrl ? '<a class="lnk" href="' + esc(j.jobUrl) + '" target="_blank" rel="noopener">posting ↗</a>' : '') +
             '</div>' +
@@ -265,6 +269,13 @@ document.getElementById('rows').addEventListener('click', async (e) => {
     qb.disabled = true;
     await fetch('/api/queue', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id, queued: qb.dataset.q === '1' }) });
+    return load();
+  }
+  const db = e.target.closest('button[data-dismiss]');
+  if (db) {
+    db.disabled = true;
+    await fetch('/api/dismiss', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id, dismissed: db.dataset.dismiss === '1' }) });
     return load();
   }
   const sb = e.target.closest('button[data-stage]');
