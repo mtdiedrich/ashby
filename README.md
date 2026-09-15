@@ -178,7 +178,7 @@ sorted by variance, not by fit.
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run apply` | Fill the queued forms, then ask whether you submitted each one. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`, `--wait-parse N` (seconds to wait for Ashby's resume parser, default 3). |
 | `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
-| `npm run harvest` | Find and validate new company boards. `--discover` searches all three sources; `--wayback`, `--hn`, `--github` each pick one; with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
+| `npm run harvest` | Find and validate new company boards. `--discover` searches the four crawl sources; `--wayback`, `--hn`, `--github`, `--commoncrawl` each pick one; `--yc` guesses from the YC directory (opt-in, see below); with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
 | `npm run test-fill` | Run the form filler headless against any apply URL. No model, no submit. |
 | `npm run check-docs` | Fail if this README has drifted from the code. |
 | `npm test` | The suite. |
@@ -388,6 +388,18 @@ apply links, and Algolia indexes every comment behind a public API. Seconds.
 `jobs.ashbyhq.com`, and the API returns the matching text fragment, so slugs come
 straight out of the results without fetching a file. GitHub allows 10 code-search
 requests a minute, so this one takes ten minutes of mostly waiting.
+
+**Common Crawl** (`--commoncrawl`) — a second URL index over a different crawl. Largely
+a subset of Wayback's: of 2,059 slugs it returned, 1,734 were already known live and
+281 already known dead. One pass is worth it, but it is not another Wayback.
+
+**Y Combinator** (`--yc`, opt-in) — the only source that is not a crawl, and so the
+only one that can find a board nobody has ever linked to or archived. YC publishes its
+whole directory, and Ashby is common among its companies: 507 of the boards already
+known were reachable from a YC name, slug or domain. The trade is precision — about
+2.3% of untested candidates are live, averaging under two postings each, and every
+candidate costs a validation request. It is not part of `--discover` because it is a
+guess rather than a sighting.
 
 Slugs are always validated before they are kept. The archive is historical, so about
 half of what it turns up is a company that has since moved ATS or folded — that is

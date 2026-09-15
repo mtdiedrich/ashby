@@ -5,6 +5,8 @@
 //   npm run harvest -- --hn         Hacker News only
 //   npm run harvest -- --github     GitHub code search only
 //   npm run harvest -- --wayback    Wayback Machine URL index only (highest yield)
+//   npm run harvest -- --commoncrawl Common Crawl URL index only
+//   npm run harvest -- --yc          guess slugs from the YC company directory
 //   npm run harvest -- --no-recheck skip re-validating slugs already in slugs.txt
 //   npm run harvest -- <file>       validate a specific file (repeatable)
 //
@@ -15,7 +17,7 @@
 // valid slug and is kept (they post again later).
 
 import fs from 'node:fs';
-import { fromHackerNews, fromGitHub, fromWayback } from '../lib/discover.js';
+import { fromHackerNews, fromGitHub, fromWayback, fromCommonCrawl, fromYCombinator } from '../lib/discover.js';
 import { P } from '../lib/paths.js';
 
 const CONCURRENCY = 12;
@@ -24,6 +26,8 @@ const recheck  = !args.includes('--no-recheck');
 const useHn    = args.includes('--hn');
 const useGh    = args.includes('--github');
 const useWb    = args.includes('--wayback');
+const useCc    = args.includes('--commoncrawl');
+const useYc    = args.includes('--yc');
 const useAll   = args.includes('--discover');
 const files    = args.filter(a => !a.startsWith('--'));
 const sources  = files.length ? files : [P.raw];
@@ -73,6 +77,25 @@ if (useWb || useAll) {
   process.stderr.write('\n');
   for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
   console.log(`  ${found.size} slugs in the archive`);
+}
+
+if (useCc || useAll) {
+  // A second crawl, largely a subset of Wayback's — worth one pass, not more.
+  console.log('asking Common Crawl for archived Ashby boards...');
+  const found = await fromCommonCrawl(msg => process.stderr.write(msg + '   \r'));
+  process.stderr.write('\n');
+  for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
+  console.log(`  ${found.size} slugs in the crawl indexes`);
+}
+
+if (useYc) {
+  // Not part of --discover: it is a guess, not a sighting. Every candidate costs a
+  // validation request and only about 2.3% are live, so it is opt-in.
+  console.log('building candidate slugs from the YC company directory...');
+  const found = await fromYCombinator(msg => process.stderr.write(msg + '   \r'));
+  process.stderr.write('\n');
+  for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
+  console.log(`  ${found.size} candidates to try`);
 }
 
 const toCheck = recheck ? new Set([...existing, ...incoming])
