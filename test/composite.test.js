@@ -24,16 +24,50 @@ test('a column of nothing but nulls stays null', () => {
   assert.deepEqual(minMax([null, null]), [null, null]);
 });
 
-test('composite sums the four normalised values', () => {
+test('total is the geometric mean of the four parts, 0..1', () => {
   const rows = [
     { fitness: 0, coverage: 0, similarity: 0, daysLive: 9999 },
     { fitness: 1, coverage: 1, similarity: 1, daysLive: 0 },
   ];
   const out = composite(rows);
-  // Freshness decays rather than min-maxing, so an ancient posting tends to 0 but
-  // is not forced there by being the oldest in the set.
-  assert.ok(out[0].total < 0.01, 'worst on every axis and ancient');
-  assert.equal(out[1].total, 4, 'best on every axis, listed today');
+  assert.ok(out[0].total < 0.05, 'worst on every axis and ancient');
+  assert.equal(out[1].total, 1, 'best on every axis, listed today');
+});
+
+test('one weak axis drags the whole thing down — the point of a geometric mean', () => {
+  // Three rows, so min-max has a real spread to work with rather than collapsing
+  // two rows to 0 and 1 on every axis.
+  //   middling  — half marks everywhere, a week old
+  //   lopsided  — top of the field on three axes, but posted two years ago
+  //   floor     — bottom of the field, present only to anchor the normalisation
+  const [middling, lopsided] = composite([
+    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 7 },
+    { fitness: 1.0, coverage: 1.0, similarity: 1.0, daysLive: 700 },
+    { fitness: 0.0, coverage: 0.0, similarity: 0.0, daysLive: 7 },
+  ]);
+  const arithmetic = r => (r.nFitness + r.nCoverage + r.nSimilarity + r.nFresh) / 4;
+  assert.ok(arithmetic(lopsided) > arithmetic(middling),
+    'averaging the parts lets three strong scores carry a dead posting');
+  assert.ok(lopsided.total < middling.total,
+    'the geometric mean does not let them');
+});
+
+test('nothing collapses to exactly zero, so ordering survives', () => {
+  // min-max always puts the lowest row at 0 on that axis. Without a floor the
+  // geometric mean would zero it out and lose every distinction below it.
+  const out = composite([
+    { fitness: 0, coverage: 0.9, similarity: 0.9, daysLive: 0 },
+    { fitness: 0, coverage: 0.1, similarity: 0.1, daysLive: 0 },
+    { fitness: 1, coverage: 1, similarity: 1, daysLive: 0 },
+  ]);
+  assert.ok(out[0].total > 0, 'a zero on one axis must not erase the row');
+  assert.ok(out[0].total > out[1].total, 'and the two zeroed rows stay in order');
+});
+
+test('the geometric mean sits between the worst and best part', () => {
+  const [row] = composite([{ fitness: 1, coverage: 1, similarity: 1, daysLive: 14 }]);
+  const parts = [row.nFitness, row.nCoverage, row.nSimilarity, row.nFresh];
+  assert.ok(row.total >= Math.min(...parts) && row.total <= Math.max(...parts));
 });
 
 test('composite is null unless all four parts exist', () => {

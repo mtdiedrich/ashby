@@ -125,10 +125,19 @@ Queueing is the only thing that writes `queue.jsonl`, and `apply` reads nothing 
 **Not interested** writes `dismissed.jsonl` and keeps `poll` from proposing it again —
 reversible, and the only "no" the system records.
 
-**total** sums four values, 0–4, with the parts shown underneath. Fitness, coverage and
-similarity are min-maxed across the rows currently shown, so the total ranks within
-what is on screen and re-scales when you change the filters. It is blank until all four
-exist — an unscored posting is unknown, not bad.
+**total** is the **geometric mean** of the four parts, 0–1, with the parts shown
+underneath. Not a sum: a posting should have to be decent on every axis rather than buy
+its way up with one strong score. A role you fit perfectly that was posted two years ago
+is not a good lead, and an average would say otherwise.
+
+Fitness, coverage and similarity are min-maxed across the rows currently shown, so the
+total ranks within what is on screen and re-scales when you change the filters. It is
+blank until all four exist — an unscored posting is unknown, not bad.
+
+Parts are floored at 0.02 before the mean. Min-max always puts the lowest row at exactly
+0 on its axis, and a geometric mean with a zero in it is zero, which would collapse
+those rows and lose every distinction below them. The floor keeps the punishment without
+erasing the ordering.
 
 Freshness is not min-maxed. It **halves every 7 days** — listed today scores 1.00, a
 week old 0.50, a fortnight 0.25, a month 0.05, and anything past two months is
