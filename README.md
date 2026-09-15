@@ -134,8 +134,8 @@ Freshness is not min-maxed. It **halves every 7 days** — listed today scores 1
 week old 0.50, a fortnight 0.25, a month 0.05, and anything past two months is
 effectively zero. Applying early is most of the advantage a job board gives you, and a
 linear scale does not express that. It is also absolute, so a posting does not get
-fresher because something older turned up beside it.  in
- if you want it gentler.
+fresher because something older turned up beside it. `HALF_LIFE_DAYS` in
+`lib/composite.js` if you want it gentler.
 
 Scores drift between runs on identical input. The score column shows the spread when a
 posting has been judged more than once; anything straddling your threshold is being
