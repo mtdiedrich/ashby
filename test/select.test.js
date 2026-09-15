@@ -88,3 +88,35 @@ test('newest postings come first', () => {
 test('an empty corpus yields nothing rather than throwing', () => {
   assert.deepEqual(candidates(new Map(), {}), []);
 });
+
+// ---- bulk staging by similarity ----------------------------------------
+// This was `match --to-fresh`. The board can only stage one posting at a time,
+// so the capability moved here rather than being dropped with the command.
+
+import { topUnscored } from '../lib/select.js';
+
+const row = (id, sim, { fitness = null, coverage = null } = {}) => ({ id, similarity: sim, fitness, coverage });
+
+test('topUnscored takes the highest-similarity postings that still need scoring', () => {
+  const rows = [row('a', 0.1), row('b', 0.3), row('c', 0.2)];
+  assert.deepEqual(topUnscored(rows, 2).map(r => r.id), ['b', 'c']);
+});
+
+test('topUnscored skips anything already scored on both fronts', () => {
+  const rows = [row('done', 0.9, { fitness: 0.5, coverage: 0.5 }), row('a', 0.1)];
+  assert.deepEqual(topUnscored(rows, 5).map(r => r.id), ['a']);
+});
+
+test('a posting with only one score still counts as needing work', () => {
+  const rows = [row('half', 0.9, { fitness: 0.5 }), row('a', 0.1)];
+  assert.deepEqual(topUnscored(rows, 5).map(r => r.id), ['half', 'a']);
+});
+
+test('postings with no similarity yet are not staged by this route', () => {
+  const rows = [row('novec', null), row('a', 0.1)];
+  assert.deepEqual(topUnscored(rows, 5).map(r => r.id), ['a']);
+});
+
+test('asking for more than exist returns what there is', () => {
+  assert.equal(topUnscored([row('a', 0.1)], 50).length, 1);
+});

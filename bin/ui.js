@@ -30,6 +30,7 @@ import { spawn } from 'node:child_process';
 import { tidy } from '../lib/text.js';
 import { corpus, asPosting } from '../lib/corpus.js';
 import { wantedTitle, usLocation } from '../lib/filters.js';
+import { topUnscored } from '../lib/select.js';
 import { salaryOf } from '../lib/comp.js';
 import * as vec from '../lib/vec.js';
 
@@ -177,6 +178,17 @@ function setDismissed(id, wanted) {
 }
 
 /**
+ * Stage the n highest-similarity postings that still need scoring. This is what
+ * `match --to-fresh` used to do; the board could only ever stage one at a time.
+ */
+function stageTop(n, opts) {
+  const picked = topUnscored(board({ ...opts, limit: 6000 }).jobs, n);
+  let staged = 0;
+  for (const j of picked) { const r = stage(j.id); if (r.ok && !r.already) staged++; }
+  return { ok: true, staged, requested: n };
+}
+
+/**
  * Add or remove a posting from queue.jsonl — the only thing that ever writes it.
  * Scoring ranks; queueing is a decision, and decisions are made here by a person.
  */
@@ -230,6 +242,13 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/api/dismiss') {
     readBody().then(({ id, dismissed }) => send(200, 'application/json', JSON.stringify(setDismissed(id, !!dismissed))))
               .catch(e => send(400, 'application/json', JSON.stringify({ ok: false, error: e.message })));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/stage-top') {
+    readBody().then(({ n, us, remote, all }) =>
+        send(200, 'application/json', JSON.stringify(stageTop(Math.min(Number(n) || 25, 500), { us, remote, all }))))
+      .catch(e => send(400, 'application/json', JSON.stringify({ ok: false, error: e.message })));
     return;
   }
 

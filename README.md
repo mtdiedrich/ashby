@@ -115,6 +115,10 @@ Click a row for the model's reasoning, the requirement-by-requirement breakdown 
 evidence, and the description. Buttons: **queue for application**, **send to scorers**,
 **not interested**.
 
+**stage top 25** in the header stages the 25 highest-similarity postings that still
+need scoring, respecting whatever filters are active. That is the way to put the
+embedding ranker's best guesses in front of the expensive scorers in bulk.
+
 Queueing is the only thing that writes `queue.jsonl`, and `apply` reads nothing else.
 **Not interested** writes `dismissed.jsonl` and keeps `poll` from proposing it again —
 reversible, and the only "no" the system records.
@@ -136,8 +140,6 @@ sorted by variance, not by fit.
 | `npm run similarity` | Embed anything whose text changed, plus the resume. `--dry`, `--force`. |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run apply` | Fill the queued forms. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`. |
-| `npm run show` | Fitness results in the terminal. `--why`, `--queued`, `--unqueued`, `--full`, `--history`. |
-| `npm run match` | Similarity ranking in the terminal. `--top N`, `--us`, `--remote`, `--company <slug>`, `--min`, `--all`, `--raw`, `--json`, `--to-fresh`. |
 | `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
 | `npm run harvest` | Validate candidate slugs from `data/raw.txt` into `slugs.txt`. `--no-recheck`. |
 | `npm run test-fill` | Run the form filler headless against any apply URL. No model, no submit. |

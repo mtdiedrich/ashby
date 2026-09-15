@@ -11,8 +11,6 @@
     "similarity": "node bin/embed.js",
     "ui": "node bin/ui.js",
     "apply": "node bin/apply.js",
-    "show": "node bin/show.js",
-    "match": "node bin/match.js",
     "gaps": "node bin/gaps.js",
     "harvest": "node bin/harvest.js",
     "test-fill": "node bin/test-fill.js",

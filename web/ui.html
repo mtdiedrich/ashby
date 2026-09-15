@@ -113,6 +113,7 @@
     <button class="tab" data-f="scored" aria-pressed="false">scored only</button>
     <input type="search" id="q" placeholder="filter by title, company, team…">
     <button class="tab" id="refresh">refresh</button>
+    <button class="tab" id="stagetop" title="Stage the 25 highest-similarity postings that still need scoring">stage top 25</button>
   </div>
 </header>
 
@@ -316,6 +317,14 @@ for (const t of document.querySelectorAll('.tab[data-f]')) {
 }
 document.getElementById('q').addEventListener('input', e => { term = e.target.value.toLowerCase().trim(); render(); });
 document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('stagetop').addEventListener('click', async (e) => {
+  e.target.disabled = true; e.target.textContent = 'staging…';
+  const res = await (await fetch('/api/stage-top', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ n: 25, ...opts }) })).json();
+  e.target.disabled = false; e.target.textContent = 'stage top 25';
+  if (res.staged === 0) alert('Nothing left to stage — everything matching is already scored or staged.');
+  await load();
+});
 document.getElementById('more').addEventListener('click', () => { limit += 1000; load(); });
 
 load();
