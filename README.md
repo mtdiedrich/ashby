@@ -7,23 +7,18 @@ submit.** Nothing here queues an application or sends one.
 Two pipelines over the same set of boards.
 
 ```
-   ┌─ pipeline 1 ── filtered, judged by a model ──────────────────────────────┐
-   │                                                                          │
-   │  slugs.txt ─► poll.js ─► fresh.jsonl ─► score.js ─► fitness.jsonl         │
-   │                                                          │               │
-   │                                                  ui.js ──┤ you pick      │
-   │                                                          ▼               │
-   │                                                    queue.jsonl           │
-   │                                                          │               │
-   │                                                     apply.js ─► [submit] │
-   └──────────────────────────────────────────────────────────────────────────┘
-
-   ┌─ pipeline 2 ── everything, ranked by embedding ──────────────────────────┐
-   │                                                                          │
-   │  slugs.txt ─► crawl.js ─► corpus.jsonl ─► embed.js ─► vectors.jsonl      │
-   │                                                          │               │
-   │                                                     match.js             │
-   └──────────────────────────────────────────────────────────────────────────┘
+  slugs.txt ─► crawl ─────────────► corpus.jsonl ──────────► embed ─► vectors.jsonl
+                                       │    │                            similarity
+                    poll: select ◄──────┘    └──► every posting, unfiltered
+                          │
+                          ▼
+                    fresh.jsonl ──► fitness   ──► fitness.jsonl    should I apply
+                                └─► coverage  ──► coverage.jsonl   what I can demonstrate
+                                                       │
+                                     ui: one board ◄───┘   you pick / dismiss
+                                          │
+                                          ▼
+                                     queue.jsonl ──► apply ──► [you submit]
 ```
 
 **Pipeline 1** applies title, location and pay filters, then has Claude read each
@@ -89,7 +84,8 @@ Five commands, one per thing you might want.
 ```powershell
 npm run poll
 ```
-Find postings you haven't seen and stage them for scoring.
+Refresh the corpus, then stage anything nothing has judged, staged, or dismissed.
+Selection lives in `lib/select.js`; `crawl` is the only thing that fetches.
 
 ```powershell
 npm run fitness
@@ -167,28 +163,24 @@ npm run poll; if ($?) { npm run fitness }
 ```
 Then `npm run ui` when you want to pick, `npm run apply` when you're at the keyboard.
 
-### I changed context.md and want everything re-judged
+### I changed context.md or the filters and want things re-judged
 
-`poll.js` only emits postings it hasn't judged before, so re-scoring needs it to
-re-emit:
-
-```powershell
-npm run poll -- --rejudge
-```
-```powershell
-npm run fitness
-```
-This re-scores every current match — it costs a model call per posting. `fitness.jsonl`
-keeps both the old and new scores; the UI shows the newest and flags the spread.
-
-### I changed the filters in poll.js
-
-Same thing — `--rejudge` is what makes a filter change take effect on postings you've
-already seen:
+A posting is a candidate while nothing has judged it, so re-judging means clearing
+what was judged. `fitness.jsonl` is append-only history — move it aside rather than
+deleting it, and the UI keeps showing the old scores until new ones land:
 
 ```powershell
-npm run poll -- --rejudge; if ($?) { npm run fitness }
+move data\fitness.jsonl data\fitness.old.jsonl
 ```
+```powershell
+npm run poll; if ($?) { npm run fitness }
+```
+
+That re-stages and re-judges everything currently matching, at one model call per
+posting. For a smaller taste, `npm run poll -- --limit 20` caps what gets staged.
+
+A pay-floor or filter change needs no special flag: `poll` re-reads `context.md` and
+`lib/filters.js` every run, so the next run simply selects differently.
 
 ### I want to watch more companies
 
@@ -222,10 +214,10 @@ npm run ui
 ```
 
 Its own filters (US only / remote only / include non-ML titles) and a **state** column
-showing what pipeline 1 has done with each posting: `unseen` means the model has never
-looked at it, `staged` means it is in `fresh.jsonl` waiting for `fitness.js`, then
-`scored`, `queued`, `applied`. Expand any `unseen` row for a **send to score.js**
-button, which stages that one posting.
+showing what has happened to each posting: `unseen` (nothing has looked at it),
+`staged` (waiting in `fresh.jsonl`), `judged`, `queued`, `applied`, and `dismissed`
+for anything you said no to. Expand a row for **send to scorers**, which stages that
+one posting, and **not interested**, which keeps `poll` from proposing it again.
 
 Or the same ranking in the terminal:
 
@@ -273,8 +265,18 @@ Those then appear in `npm run ui` like anything else, with reasoning and concern
 you queue from there.
 
 `--to-fresh` converts corpus records into the shape `fitness.js` expects and writes both
-`fresh.jsonl` and `postings.jsonl`. Don't redirect `--json` into `fresh.jsonl` by hand
+`fresh.jsonl`. Don't redirect `--json` into `fresh.jsonl` by hand
 for this — the field names differ and you'd score postings with no description.
+
+### I do not want to see this posting again
+
+Open it in the board and hit **not interested**. That writes `dismissed.jsonl` and
+`poll` stops proposing it. Reversible — the row shows as `dismissed` with an
+**un-dismiss** button.
+
+There is no "seen" list any more. A posting is a candidate exactly while nothing has
+judged it, staged it, or dismissed it — all facts already on disk, rather than a
+separate ledger that can drift out of step with them.
 
 ### Why did it reject that one?
 
@@ -354,7 +356,7 @@ variance, so treat a score as a bucket, not a measurement.
 
 The **similar** tab shows pipeline 2 instead: the whole corpus ranked by embedding
 similarity to your resume, with a `state` column for what pipeline 1 has done with each
-one, and a **send to score.js** button on anything unseen. It needs `crawl.js` and
+one, and a **send to scorers** button on anything unseen. It needs `crawl.js` and
 `embed.js` to have run; without vectors it says so.
 
 `ui.html` is a template the server reads per request; edit it and refresh, no restart.
@@ -468,8 +470,9 @@ so they can't drift. Accepts `$150,000`, `150000`, or `150k`. `poll.js` prints t
 it's using on every run.
 
 **Title and location filters** — top of `poll.js`: `WANT`, `REJECT`, `US_LOC`,
-`BLOCK_LOC`, `MAX_AGE_DAYS`. After changing them, `npm run poll -- --rejudge` re-emits
-everything currently posted instead of only what's new.
+`BLOCK_LOC` in `lib/filters.js`, shared by every stage, and `MAX_AGE_DAYS` at the top
+of `bin/poll.js`. Changes take effect on the next `npm run poll` — there is nothing to
+invalidate, because candidate selection is computed fresh each run.
 
 **Fill rules** — `RULES` in `lib/fill.browser.js`, matched against the field label.
 Values come from `me.json`.
@@ -499,6 +502,28 @@ runs with `--remote-debugging-port=9222`, so you can attach Claude Code to the l
 
 > Attach to the open tab on localhost:9222. Fill the fields outlined red. Context is in
 > context.md. Do not submit.
+
+---
+
+## Tests
+
+```powershell
+npm test
+```
+
+Node's built-in runner over `test/`. No framework, no dependency. 56 tests over the
+parts where being wrong is silent: salary parsing (hourly and monthly annualising,
+currency conversion, unstated pay), the title and location filters, whitespace
+normalising, the vector maths, pay-floor parsing, and candidate selection end to end.
+
+This project is written test-first. The failing test goes in before the implementation,
+and a bug gets a test reproducing it before it gets a fix.
+
+Tests never touch your real data. `test/helpers.js` hands each one a temp `ASHBY_HOME`,
+and `lib/paths.js` resolves paths lazily so that redirection works. That matters more
+than it sounds: the suite's first file-reading test found that modules were capturing
+their paths at import time, which made them both untestable and silently immune to the
+file ever moving.
 
 ---
 
