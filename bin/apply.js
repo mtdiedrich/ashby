@@ -132,7 +132,10 @@ for (const [i, job] of queue.entries()) {
     }
 
     await page.evaluate(FILL_SRC);
-    await page.evaluate(me => window.__ashby.configure(me), ME);
+    // The posting goes in too: the pay rule needs the published range to decide
+    // whether the stated ask would land below what the employer already budgeted.
+    await page.evaluate(([me, posting]) => window.__ashby.configure(me, posting),
+      [ME, { employmentType: job.employmentType, salary: job.salary ?? null }]);
 
     record.ruleResults = await page.evaluate(() => window.__ashby.fill());
     const ruleOk = record.ruleResults.filter(r => r.ok).length;

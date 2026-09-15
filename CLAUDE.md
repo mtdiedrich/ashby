@@ -106,6 +106,10 @@ earlier explanation was wrong.
   extended first.
 - **Nothing invents the user's details.** The model skips rather than guesses; a gap
   is better than a fabricated answer on a job application.
+- **An ask is not a floor.** `me.json`'s `salaryExpectation`/`hourlyRate` are what
+  gets typed into a form. The screening floor is `Minimum base` in `context.md`.
+  Selection code must never read the ask — `test/pay-ask.test.js` enforces this by
+  scanning `lib/select.js`, `lib/comp.js`, `lib/filters.js` and `bin/poll.js`.
 
 ## Money
 

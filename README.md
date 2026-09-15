@@ -208,6 +208,40 @@ it refused are **red**:
 - **Anything not answerable from `context.md`.** The model skips rather than guessing,
   because a plausible invented answer on a job application is worse than a gap.
 
+### Pay expectations
+
+`me.json` carries two numbers:
+
+```json
+"salaryExpectation": 165000,
+"hourlyRate": 150
+```
+
+**Neither is a screening floor.** Nothing is filtered out on them — they are only what
+gets typed into a "salary expectations" box. The floor that decides which postings are
+worth scoring is `Minimum base` in `context.md`, read by `poll`, and the two are
+deliberately separate. `npm test` asserts the selection code never reads these.
+
+Which one is used depends on the engagement, not on the field's name — boards label a
+contract rate box "salary expectations" all the time:
+
+| | asks |
+|---|---|
+| Salaried role | `salaryExpectation`, annual |
+| Contract role, or any posting quoting an hourly range | `hourlyRate`, per hour |
+| Field says "hourly"/"annual" explicitly | that, overriding the above |
+
+**If the posting publishes a range and your number is below the bottom of it, the ask
+rises to just above their floor instead** — 5%, rounded up to a whole thousand (or a
+multiple of 5 for an hourly rate). Asking $165K against a posted $205K–$300K band
+anchors you below what they have already budgeted, so it asks $216,000.
+
+The bump only happens against a stated USD floor. A range in another currency is left
+alone rather than converted into a negotiating position at a guessed exchange rate,
+and a posting with no published range just gets your stated number. If pay is a
+drop-down of bands rather than a free-text box, it is left red — which band to pick is
+a judgement call about a boundary, not a lookup.
+
 **Self-identification questions are handled deterministically, before the model sees
 them.** Gender, ethnicity/race, veteran status and disability are set to that field's
 own decline option — "Decline to Self Identify", "I don't wish to answer", "I prefer
