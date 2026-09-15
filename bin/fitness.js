@@ -18,6 +18,7 @@ import { ask, context, MODEL } from '../lib/ai.js';
 import { resumeBlock } from '../lib/resume.js';
 import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
+import { completeBatch } from '../lib/batch.js';
 
 const BATCH = 8;
 const FORCE = process.argv.includes('--force');
@@ -85,11 +86,9 @@ const bar = progress(jobs.length, 'judging');
 const groups = [];
 for (let i = 0; i < jobs.length; i += BATCH) groups.push(i);
 
-const outcomes = await pool(groups, async (i) => {
-  const batch = jobs.slice(i, i + BATCH);
-  const user = batch.map((j, k) => {
-    const pay = j.salary ? j.salary.summary : 'not stated';
-    return `<posting index="${i + k}">
+const describe = (j, index) => {
+  const pay = j.salary ? j.salary.summary : 'not stated';
+  return `<posting index="${index}">
 title: ${j.title}
 company (ashby slug): ${j.slug}
 team: ${j.department ?? '?'} / ${j.team ?? '?'}
@@ -100,9 +99,20 @@ stated pay: ${pay}
 
 ${(j.descriptionPlain || '(no description)').slice(0, 7000)}
 </posting>`;
-  }).join('\n\n');
+};
 
-  const { results } = await ask(SYSTEM, user, { schema: Scored, maxTokens: 8000, documents: [RESUME] });
+const outcomes = await pool(groups, async (i) => {
+  const batch = jobs.slice(i, i + BATCH);
+  const want = batch.map((_, k) => i + k);
+
+  // Structured output guarantees the SHAPE of the reply, not that it covers every
+  // posting asked about. A batch of 8 coming back with 7 results used to leave the
+  // 8th silently unscored — 1.9% of postings on a real run. Ask again for the gaps.
+  const { results, missing } = await completeBatch(want, async (indices) => {
+    const user = indices.map(ix => describe(jobs[ix], ix)).join('\n\n');
+    const { results } = await ask(SYSTEM, user, { schema: Scored, maxTokens: 8000, documents: [RESUME] });
+    return results;
+  });
 
   const rows = [];
   for (const r of results) {
@@ -116,9 +126,8 @@ ${(j.descriptionPlain || '(no description)').slice(0, 7000)}
       scoredAt: new Date().toISOString(), model: MODEL,
     });
   }
-  const got = new Set(results.map(r => r.index));
-  for (let k = 0; k < batch.length; k++) {
-    if (!got.has(i + k)) console.warn(`\n  ! no result for "${batch[k].title}" — not scored`);
+  for (const ix of missing) {
+    console.warn(`\n  ! no result for "${jobs[ix].title}" after a retry — not scored`);
   }
   // Ticked here rather than in onDone: a group is BATCH postings, and the bar
   // counts postings, so the caller is the only place that knows the size.
