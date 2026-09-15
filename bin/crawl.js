@@ -18,7 +18,8 @@
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
-import { corpus, embedText, hash, rawLineCount, compactCorpus } from '../lib/corpus.js';
+import { corpusAndCount, embedText, hash, compactCorpus } from '../lib/corpus.js';
+import { progress } from '../lib/progress.js';
 import { jobsFlag } from '../lib/pool.js';
 import { ATS, keepDescription } from '../lib/ats.js';
 
@@ -42,7 +43,7 @@ if (COMPACT_ONLY) {
 }
 
 if (STATS_ONLY) {
-  const c = corpus();
+  const { map: c, lines } = corpusAndCount();
   const bySlug = {}, byAts = {};
   for (const p of c.values()) {
     bySlug[p.company] = (bySlug[p.company] ?? 0) + 1;
@@ -53,7 +54,7 @@ if (STATS_ONLY) {
   for (const [a, n] of Object.entries(byAts).sort((x, y) => y[1] - x[1])) {
     console.log(`  ${a.padEnd(12)} ${n}`);
   }
-  console.log(`  raw lines (incl. revisions): ${rawLineCount()}`);
+  console.log(`  raw lines (incl. revisions): ${lines}`);
   const top = Object.entries(bySlug).sort((a, b) => b[1] - a[1]).slice(0, 10);
   for (const [s, n] of top) console.log(`  ${String(n).padStart(4)}  ${s}`);
   process.exit(0);
@@ -85,7 +86,11 @@ if (!work.length) {
   process.exit(1);
 }
 
-const known = corpus();
+// One read, not four. corpus() and rawLineCount() each walk the whole file, and this
+// used to call them at the top, twice for the compaction check, and once more for the
+// closing line — about twelve seconds at 190 MB, in a run that prints nothing while
+// it works.
+const { map: known, lines: linesBefore } = corpusAndCount();
 const now = new Date().toISOString();
 const added = [];
 let ok = 0, dead = 0, seenTotal = 0, unchanged = 0;
@@ -115,14 +120,31 @@ async function crawlSlug(ats, slug) {
   }
 }
 
+// 10,000 boards is four and a half minutes. Saying nothing for four and a half
+// minutes is indistinguishable from being hung.
+const bar = progress(work.length, 'fetching boards');
 const queue = work.slice();
 await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
-  while (queue.length) { const [ats, slug] = queue.shift(); await crawlSlug(ats, slug); }
+  while (queue.length) {
+    const [ats, slug] = queue.shift();
+    await crawlSlug(ats, slug);
+    bar.tick();
+  }
 }));
+bar.finish();
 
 if (added.length) {
   fs.appendFileSync(P.corpus, added.map(r => JSON.stringify(r)).join('\n') + '\n');
 }
+
+// Derived from what this run already knows rather than re-read from disk.
+const fresh = added.filter(r => !known.has(r.id)).length;
+const liveNow = known.size + fresh;
+const linesNow = linesBefore + added.length;
+
+console.log(`${ok} boards ok, ${dead} dead, ${seenTotal} postings seen`);
+console.log(`  ${fresh} new, ${added.length - fresh} changed, ${unchanged} unchanged`);
+console.log(`  corpus.jsonl now holds ${liveNow.toLocaleString()} postings`);
 
 // The corpus is append-only, so a re-crawl that changes many postings at once leaves
 // every superseded row behind. One storage-policy change rewrote 60,903 of them, the
@@ -131,17 +153,10 @@ if (added.length) {
 // approaching that limit — whichever comes first.
 {
   const bytes = fs.existsSync(P.corpus) ? fs.statSync(P.corpus).size : 0;
-  const live = corpus().size;
-  const total = rawLineCount();
-  if (total > live * 1.25 || bytes > 0x1fffffe8 * 0.75) {
-    process.stdout.write(`  compacting ${total.toLocaleString()} rows down to ${live.toLocaleString()} postings...`);
+  if (linesNow > liveNow * 1.25 || bytes > 0x1fffffe8 * 0.75) {
+    process.stderr.write(`  compacting ${linesNow.toLocaleString()} rows down to ${liveNow.toLocaleString()} postings... `);
     const r = compactCorpus();
-    console.log(` ${(r.bytesBefore / 1048576).toFixed(0)} MB → ${(r.bytesAfter / 1048576).toFixed(0)} MB`);
+    process.stderr.write(`${(r.bytesBefore / 1048576).toFixed(0)} MB → ${(r.bytesAfter / 1048576).toFixed(0)} MB\n`);
   }
 }
-
-const fresh = added.filter(r => !known.has(r.id)).length;
-console.log(`${ok} boards ok, ${dead} dead, ${seenTotal} postings seen`);
-console.log(`  ${fresh} new, ${added.length - fresh} changed, ${unchanged} unchanged`);
-console.log(`  corpus.jsonl now holds ${corpus().size} postings`);
 if (added.length) console.log(`\nNext: npm run fitness`);

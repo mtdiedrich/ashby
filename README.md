@@ -211,6 +211,19 @@ it refused are **red**:
 
 ### How long a run takes
 
+`poll` fetches every board on both systems — around 10,000 of them, a few minutes —
+and shows a bar with an ETA while it does:
+
+```
+Ashby: 3918 boards
+Greenhouse: 6103 boards
+fetching boards [█████████               ]  38%  3820/10021  ~2m 14s left
+```
+
+Selecting from the corpus afterwards takes a couple of seconds. It used to read the
+whole 190 MB file four times in one run; it reads it once.
+
+
 Scoring is almost entirely waiting on the API, so it runs several requests at once.
 Measured on 24 postings:
 
