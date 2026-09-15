@@ -32,6 +32,7 @@ import { z } from 'zod';
 import { ask, context } from '../lib/ai.js';
 import { hash } from '../lib/corpus.js';
 import { resumeText } from '../lib/resume-text.js';
+import { progress } from '../lib/progress.js';
 
 const argv    = process.argv.slice(2);
 const DRY     = argv.includes('--dry');
@@ -163,8 +164,8 @@ if (!needExtract.length && !needScore.length) { console.log('\nnothing to do'); 
 
 // ---- pass 1: requirements ----------------------------------------------
 
-for (const [i, w] of needExtract.entries()) {
-  process.stderr.write(`  extracting ${i + 1}/${needExtract.length}\r`);
+const exBar = needExtract.length ? progress(needExtract.length, 'requirements') : null;
+for (const w of needExtract) {
   try {
     const { requirements } = await ask(
       EXTRACT_SYSTEM,
@@ -178,18 +179,19 @@ for (const [i, w] of needExtract.entries()) {
   } catch (e) {
     console.warn(`\n  ! ${w.j.title}: ${e.message}`);
   }
+  exBar?.tick();
 }
-if (needExtract.length) process.stderr.write('\n');
+exBar?.finish();
 
 // ---- pass 2: score each requirement ------------------------------------
 
 const SCORE_SYSTEM = scoreSystem(resume);
 const results = [];
 
-for (const [i, w] of needScore.entries()) {
+const scBar = needScore.length ? progress(needScore.length, 'coverage') : null;
+for (const w of needScore) {
   const reqs = reqCache.get(w.jdHash)?.requirements;
-  if (!reqs?.length) continue;
-  process.stderr.write(`  scoring ${i + 1}/${needScore.length}\r`);
+  if (!reqs?.length) { scBar?.tick(); continue; }
 
   try {
     const { scores } = await ask(
@@ -244,8 +246,9 @@ for (const [i, w] of needScore.entries()) {
   } catch (e) {
     console.warn(`\n  ! ${w.j.title}: ${e.message}`);
   }
+  scBar?.tick();
 }
-if (needScore.length) process.stderr.write('\n');
+scBar?.finish();
 
 // ---- report ------------------------------------------------------------
 

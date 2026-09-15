@@ -12,6 +12,7 @@ import { corpus, embedText, hash } from '../lib/corpus.js';
 import { embedAll, EMBED_MODEL } from '../lib/embed.js';
 import { resumeText } from '../lib/resume-text.js';
 import * as vec from '../lib/vec.js';
+import { progress } from '../lib/progress.js';
 
 const DRY = process.argv.includes('--dry');
 const FORCE = process.argv.includes('--force');
@@ -76,19 +77,14 @@ if (resumePending) {
 }
 
 if (pending.length) {
-  const t0 = Date.now();
+  const bar = progress(pending.length, 'embedding');
   const CHUNK = 480;   // append every ~5 batches so a crash does not lose the run
   for (let i = 0; i < pending.length; i += CHUNK) {
     const slice = pending.slice(i, i + CHUNK);
-    const vecs = await embedAll(slice.map(p => p.text), (done) => {
-      const n = i + done;
-      const rate = n / ((Date.now() - t0) / 1000);
-      process.stderr.write(`  ${n}/${pending.length}  ${rate.toFixed(0)}/s   \r`);
-    });
+    const vecs = await embedAll(slice.map(p => p.text), (done) => bar.set(i + done));
     vec.append(slice.map((p, k) => ({ key: p.key, hash: p.hash, model: EMBED_MODEL, v: vec.normalise(vecs[k]) })));
   }
-  process.stderr.write('\n');
-  console.log(`${pending.length} postings embedded in ${Math.round((Date.now() - t0) / 1000)}s`);
+  bar.finish();
 }
 
 console.log(`\nvectors.jsonl now holds ${vec.load().size} vectors\n\nNext: npm run ui`);

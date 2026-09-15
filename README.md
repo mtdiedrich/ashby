@@ -87,6 +87,8 @@ Costs, per posting: **fitness** one call to your `ASHBY_MODEL`; **coverage** two
 calls; **similarity** a fraction of a cent. `npm run fitness -- --dry` prices a run
 before you commit to it.
 
+Each shows a progress bar with an ETA — a 150-posting fitness run is several minutes.
+
 ```powershell
 npm run ui
 ```

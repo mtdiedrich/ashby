@@ -16,6 +16,7 @@ import { P } from '../lib/paths.js';
 import { z } from 'zod';
 import { ask, context, MODEL } from '../lib/ai.js';
 import { resumeBlock } from '../lib/resume.js';
+import { progress } from '../lib/progress.js';
 
 const BATCH = 8;
 const FORCE = process.argv.includes('--force');
@@ -74,6 +75,7 @@ ${context()}
 </candidate_context>`;
 
 const out = [];
+const bar = progress(jobs.length, 'judging');
 for (let i = 0; i < jobs.length; i += BATCH) {
   const batch = jobs.slice(i, i + BATCH);
   const user = batch.map((j, k) => {
@@ -91,7 +93,6 @@ ${(j.descriptionPlain || '(no description)').slice(0, 7000)}
 </posting>`;
   }).join('\n\n');
 
-  process.stderr.write(`scoring ${i + 1}-${Math.min(i + BATCH, jobs.length)} of ${jobs.length}...\n`);
   const { results } = await ask(SYSTEM, user, { schema: Scored, maxTokens: 8000, documents: [RESUME] });
 
   for (const r of results) {
@@ -107,9 +108,11 @@ ${(j.descriptionPlain || '(no description)').slice(0, 7000)}
   }
   const got = new Set(results.map(r => r.index));
   for (let k = 0; k < batch.length; k++) {
-    if (!got.has(i + k)) console.warn(`  ! no result for "${batch[k].title}" — not scored, stays unqueued`);
+    if (!got.has(i + k)) console.warn(`\n  ! no result for "${batch[k].title}" — not scored`);
   }
+  bar.tick(batch.length);
 }
+bar.finish();
 
 const read = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
