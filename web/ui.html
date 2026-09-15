@@ -48,8 +48,8 @@
   td { padding: 7px 10px; vertical-align: top; }
   td.num { font-variant-numeric: tabular-nums; font-weight: 600; width: 58px; }
   td.num.none { color: var(--muted); font-weight: 400; }
-  td.total { width: 74px; }
-  td.total .sub { font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+  td.value { border-left: 1px solid var(--line); }
+  td.num .sub { font-variant-numeric: tabular-nums; }
   .s-hi { color: var(--good); } .s-mid { color: var(--warn); } .s-lo { color: var(--muted); }
   td.title { font-weight: 600; max-width: 360px; }
   td.co, td.loc, td.pay, td.date { color: var(--muted); white-space: nowrap; }
@@ -122,11 +122,12 @@
 <table>
   <thead>
     <tr>
-      <th data-s="fitness" class="sorted">fitness <span class="caret">▾</span></th>
+      <th data-s="fitness">fitness <span class="caret">▾</span></th>
       <th data-s="coverage">coverage <span class="caret">▾</span></th>
       <th data-s="similarity">similarity <span class="caret">▾</span></th>
-      <th data-s="daysLive">days live <span class="caret">▾</span></th>
-      <th data-s="total" title="Geometric mean of the four parts, 0-1. Fitness, coverage and similarity are min-maxed across the rows shown; freshness halves every 7 days. One weak axis drags the whole score down. Blank until all four exist.">total <span class="caret">▾</span></th>
+      <th data-s="score" title="Geometric mean of the three scores, each min-maxed across the rows shown. One weak score drags it down — a posting has to be decent on all three. Blank until all three exist.">score <span class="caret">▾</span></th>
+      <th data-s="fresh" title="How much of its value the posting still has. Halves every 7 days: listed today 1.00, a week old 0.50, a month 0.05.">fresh <span class="caret">▾</span></th>
+      <th data-s="value" class="sorted" title="The average of score and fresh — how good the match is, and whether it is still worth chasing.">value <span class="caret">▾</span></th>
       <th data-s="state">state <span class="caret">▾</span></th>
       <th data-s="title">title <span class="caret">▾</span></th>
       <th data-s="slug">company <span class="caret">▾</span></th>
@@ -139,7 +140,7 @@
 <button class="tab" id="more" hidden>show more</button>
 
 <script>
-let JOBS = [], TOTAL = 0, term = '', sortKey = 'fitness', sortDir = -1, limit = 600;
+let JOBS = [], TOTAL = 0, term = '', sortKey = 'value', sortDir = -1, limit = 600;
 const opts = { us: true, remote: false, all: false, scored: false };
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -163,7 +164,7 @@ async function load() {
   try { d = await (await fetch('/api/board?' + q)).json(); }
   catch {
     document.getElementById('rows').innerHTML =
-      '<tr><td colspan="10" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
+      '<tr><td colspan="11" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
     return;
   }
 
@@ -171,7 +172,7 @@ async function load() {
   TOTAL = d.total;
   document.getElementById('stamp').textContent =
     d.total + ' postings · ' + d.counts.fitness + ' fitness · ' + d.counts.coverage +
-    ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.total + ' scored on all four · ' + d.counts.queued + ' queued';
+    ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.value + ' ranked · ' + d.counts.queued + ' queued';
   const more = document.getElementById('more');
   more.hidden = JOBS.length >= TOTAL;
   more.textContent = 'show more (' + JOBS.length + ' of ' + TOTAL + ')';
@@ -196,7 +197,7 @@ function visible() {
 function render() {
   const rows = visible();
   const body = document.getElementById('rows');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="10" class="empty">nothing here</td></tr>'; return; }
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="11" class="empty">nothing here</td></tr>'; return; }
 
   body.innerHTML = rows.map(j => {
     const cov = j.coverage == null ? '—'
@@ -234,19 +235,20 @@ function render() {
         '<td class="num ' + cls(j.coverage) + '">' + cov + '</td>' +
         '<td class="num ' + (j.similarity == null ? 'none' : '') + '">' +
           (j.similarity == null ? '—' : j.similarity.toFixed(3)) + '</td>' +
-        '<td class="date' + (j.daysLive > 90 ? ' stale' : '') + '">' +
-          (j.daysLive == null ? '—' : j.daysLive) + '</td>' +
-        '<td class="num total ' + (j.total == null ? 'none' : cls(j.total)) + '">' +
-          (j.total == null ? '—' : j.total.toFixed(2)) +
-          (j.total == null ? '' : '<span class="sub">' + [j.nFitness, j.nCoverage, j.nSimilarity, j.nFresh]
-             .map(v => v.toFixed(1)).join(' ') + '</span>') + '</td>' +
+        '<td class="num ' + (j.score == null ? 'none' : cls(j.score)) + '">' +
+          (j.score == null ? '—' : j.score.toFixed(2)) + '</td>' +
+        '<td class="num ' + (j.fresh == null ? 'none' : cls(j.fresh)) + '">' +
+          (j.fresh == null ? '—' : j.fresh.toFixed(2)) +
+          (j.daysLive == null ? '' : '<span class="sub">' + j.daysLive + 'd</span>') + '</td>' +
+        '<td class="num value ' + (j.value == null ? 'none' : cls(j.value)) + '">' +
+          (j.value == null ? '—' : j.value.toFixed(2)) + '</td>' +
         '<td class="st"><span class="state st-' + j.state + '">' + j.state + '</span></td>' +
         '<td class="title">' + esc(j.title) + '</td>' +
         '<td class="co">' + esc(j.slug) + '</td>' +
         '<td class="loc">' + esc(j.location || '?') + '</td>' +
         '<td class="pay' + (j.pay ? ' has' : '') + '">' + esc(j.pay || '—') + '</td>' +
       '</tr>' +
-      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="10">' +
+      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="11">' +
         '<div class="panes">' +
           '<div class="pane">' +
             '<h4>Fitness — should I apply</h4>' + fitPane +
@@ -304,7 +306,7 @@ for (const th of document.querySelectorAll('thead th[data-s]')) {
   th.addEventListener('click', () => {
     const k = th.dataset.s;
     if (sortKey === k) sortDir = -sortDir;
-    else { sortKey = k; sortDir = ['fitness', 'coverage', 'similarity', 'payNum', 'daysLive', 'total'].includes(k) ? -1 : 1; }
+    else { sortKey = k; sortDir = ['fitness', 'coverage', 'similarity', 'score', 'fresh', 'value', 'payNum'].includes(k) ? -1 : 1; }
     for (const o of document.querySelectorAll('thead th')) o.classList.remove('sorted');
     th.classList.add('sorted');
     th.querySelector('.caret').textContent = sortDir === -1 ? '▾' : '▴';

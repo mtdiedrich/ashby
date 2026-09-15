@@ -154,7 +154,7 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
       fitness: scored.filter(r => r.fitness != null).length,
       coverage: scored.filter(r => r.coverage != null).length,
       similarity: scored.filter(r => r.similarity != null).length,
-      total: scored.filter(r => r.total != null).length,
+      value: scored.filter(r => r.value != null).length,
       queued: scored.filter(r => r.state === 'queued').length,
       applied: scored.filter(r => r.state === 'applied').length,
     },

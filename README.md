@@ -125,19 +125,32 @@ Queueing is the only thing that writes `queue.jsonl`, and `apply` reads nothing 
 **Not interested** writes `dismissed.jsonl` and keeps `poll` from proposing it again —
 reversible, and the only "no" the system records.
 
-**total** is the **geometric mean** of the four parts, 0–1, with the parts shown
-underneath. Not a sum: a posting should have to be decent on every axis rather than buy
-its way up with one strong score. A role you fit perfectly that was posted two years ago
-is not a good lead, and an average would say otherwise.
+Three of the columns are derived, and they are what you actually sort on:
 
-Fitness, coverage and similarity are min-maxed across the rows currently shown, so the
-total ranks within what is on screen and re-scales when you change the filters. It is
-blank until all four exist — an unscored posting is unknown, not bad.
+**score** — the geometric mean of fitness, coverage and similarity, each min-maxed
+across the rows currently shown. Geometric, not average, so a posting has to be decent
+on all three rather than buying its way up with one. It is relative: a 0.2 fitness is
+the best score in a set where nothing beats 0.2, and it re-scales when you change the
+filters.
 
-Parts are floored at 0.02 before the mean. Min-max always puts the lowest row at exactly
-0 on its axis, and a geometric mean with a zero in it is zero, which would collapse
-those rows and lose every distinction below them. The floor keeps the punishment without
-erasing the ordering.
+**fresh** — how much of its value the posting still has, with its age underneath. Halves
+every 7 days: listed today 1.00, a week old 0.50, a month 0.05. Exponential because
+value does not fall off evenly — a job listed today is worth applying to, one a week old
+has lost ground to everyone who applied first, and 200 versus 300 days is nothing. It is
+absolute, so a posting does not become fresher because something older turned up beside
+it. `HALF_LIFE_DAYS` in `lib/composite.js` if you want it gentler.
+
+**value** — the average of score and fresh. Half of it is how good the match is, half is
+whether it is still worth chasing. This is the default sort.
+
+All three are blank until their inputs exist; an unscored posting is unknown, not bad.
+Parts are floored at 0.02 before the geometric mean, because min-max always puts the
+lowest row at exactly 0 on its axis and a geometric mean with a zero in it is zero —
+without the floor those rows collapse and lose every distinction below them.
+
+The split is the useful part. Sorting by **score** gives the best matches regardless of
+age; sorting by **value** gives what is worth doing something about today. On the live
+board they disagree sharply — the top four by score are 92 to 215 days old.
 
 Freshness is not min-maxed. It **halves every 7 days** — listed today scores 1.00, a
 week old 0.50, a fortnight 0.25, a month 0.05, and anything past two months is
