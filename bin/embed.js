@@ -17,6 +17,15 @@ const DRY = process.argv.includes('--dry');
 const FORCE = process.argv.includes('--force');
 
 const jobs = corpus();
+
+// embed.js does not fetch. poll.js is the only thing that refreshes the corpus, so
+// say so when it looks stale rather than quietly vectorising yesterday's postings.
+{
+  const newest = [...jobs.values()].reduce((a, p) => (p.fetchedAt ?? '') > a ? p.fetchedAt : a, '');
+  const hours = newest ? (Date.now() - new Date(newest)) / 3.6e6 : Infinity;
+  if (!jobs.size) console.warn('corpus is empty — run: npm run poll');
+  else if (hours > 24) console.warn(`⚠  corpus last refreshed ${Math.round(hours)}h ago — run: npm run poll`);
+}
 const stored = vec.load();
 
 // ---- what needs doing --------------------------------------------------

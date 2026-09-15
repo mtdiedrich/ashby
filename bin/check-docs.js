@@ -31,6 +31,7 @@ const INTERNAL = new Set(['crawl.js', 'embed.js']);
 // A script counts as documented under either name: bin/poll.js or 'npm run poll'.
 const documented = s => readme.includes(s) || readme.includes('npm run ' + s.replace(/.js$/, ''));
 for (const s of scripts) {
+  if (INTERNAL.has(s)) continue;
   if (!documented(s)) problems.push(`script not mentioned in README: ${s}`);
 }
 

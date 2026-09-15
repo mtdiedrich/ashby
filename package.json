@@ -7,7 +7,7 @@
     "poll": "node bin/poll.js",
     "fitness": "node bin/fitness.js",
     "coverage": "node bin/coverage.js",
-    "similarity": "node bin/crawl.js && node bin/embed.js",
+    "similarity": "node bin/embed.js",
     "ui": "node bin/ui.js",
     "apply": "node bin/apply.js",
     "show": "node bin/show.js",

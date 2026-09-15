@@ -7,11 +7,10 @@ submit.** Nothing here queues an application or sends one.
 Two pipelines over the same set of boards.
 
 ```
-  slugs.txt ─► crawl ─────────────► corpus.jsonl ──────────► embed ─► vectors.jsonl
-                                       │    │                            similarity
-                    poll: select ◄──────┘    └──► every posting, unfiltered
-                          │
-                          ▼
+  slugs.txt ─► poll ──────────────► corpus.jsonl ──► similarity ─► vectors.jsonl
+                 │                      every posting, unfiltered
+                 │  the only fetch
+                 ▼  selects candidates
                     fresh.jsonl ──► fitness   ──► fitness.jsonl    should I apply
                                 └─► coverage  ──► coverage.jsonl   what I can demonstrate
                                                        │
@@ -84,8 +83,8 @@ Five commands, one per thing you might want.
 ```powershell
 npm run poll
 ```
-Refresh the corpus, then stage anything nothing has judged, staged, or dismissed.
-Selection lives in `lib/select.js`; `crawl` is the only thing that fetches.
+Fetch every posting from every board, then stage anything nothing has judged,
+staged, or dismissed. This is the only command that hits the network.
 
 ```powershell
 npm run fitness
@@ -101,8 +100,8 @@ time, for a coverage number and a gap list. Optional; two Haiku calls per postin
 ```powershell
 npm run similarity
 ```
-Refresh the whole corpus and embed whatever changed, so every posting has a similarity
-score. Cheap — cents a month after the first run.
+Embed whatever changed since last time, so every posting has a similarity score.
+Cheap — cents a month after the first run. Run `poll` first; this does not fetch.
 
 ```powershell
 npm run ui
@@ -197,8 +196,12 @@ have been open for months. `MAX_AGE_DAYS` in `poll.js` caps that if you want it.
 
 ### I want to see postings ranked by embedding similarity
 
-First time only — fetch every posting and embed them. About five minutes, ~$0.16:
+First time only — `poll` fetches every posting, then `similarity` embeds them.
+About five minutes and ~$0.16:
 
+```powershell
+npm run poll
+```
 ```powershell
 npm run similarity
 ```
@@ -239,12 +242,11 @@ npm run match -- --us --top 25 --all
 ML at all — sometimes the point of having the broad net. `--raw` turns off centring if
 you want to see what the uncentred scores look like.
 
-Keeping it current is the same one command — it picks up new and changed postings and
-embeds only what actually changed, so a daily refresh is seconds and fractions of a
-cent:
+Keeping it current is your normal daily `poll`, then `similarity` to vectorise what
+changed — seconds and fractions of a cent:
 
 ```powershell
-npm run similarity
+npm run poll; if ($?) { npm run similarity }
 ```
 
 ### I want the broad net judged properly, not just ranked
@@ -310,7 +312,7 @@ it's sent as a document on every call, so there's nothing to regenerate.
 | Command | What it does |
 |---|---|
 | `npm run harvest` | Validate candidate slugs from `raw.txt`, merge into `slugs.txt`, 404s to `dead.txt`. Takes filenames as arguments; `--no-recheck` skips re-validating known slugs. |
-| `npm run poll` | Refresh the corpus, then stage candidates into `fresh.jsonl`: anything matching your filters that nothing has judged, staged, or dismissed. `--no-crawl` skips the fetch, `--dry` shows without staging, `--all` ignores the title filter, `--anywhere` the location filter, `--limit N` caps it. |
+| `npm run poll` | **The only command that talks to the job boards.** Fetches every posting into `corpus.jsonl`, then stages candidates into `fresh.jsonl`: anything matching your filters that nothing has judged, staged, or dismissed. `--no-crawl` skips the fetch, `--dry` shows without staging, `--all` ignores the title filter, `--anywhere` the location filter, `--limit N` caps it. |
 | `npm run fitness` | Judge `fresh.jsonl` against your resume and `context.md` — a holistic 0-1 **fitness**, with reasoning. Appends to `fitness.jsonl` and truncates `fresh.jsonl`; `--keep` leaves it, for re-runs. |
 | `npm run coverage` | Extract each posting's requirements and score the resume against them one by one, for a **coverage** number and a gap list. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`. |
 | `npm run gaps` | Aggregate coverage across postings — what you keep missing. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
@@ -318,7 +320,7 @@ it's sent as a document on every call, so there's nothing to regenerate.
 | `npm run show` | Same data in the terminal. `--why` for reasoning without descriptions, plus `--queued`, `--unqueued`, `--full`, `--history`, or a company/keyword for detail. |
 | `npm run apply` | Fill the forms in `queue.jsonl`. `--no-model` runs the deterministic rules only (no API call), `--limit N`, `--url <apply-url>` for a one-off. |
 | `npm run test-fill -- <url>` | Run the form filler headless against any apply URL with placeholder data. No model, no submit. |
-| `npm run similarity` | Fetch every posting from every board into `corpus.jsonl`, then embed whatever changed. This is the only thing that talks to the job boards; `poll` selects from what it stored. |
+| `npm run similarity` | Embed any posting whose text changed since last time, plus the resume. Reads the corpus; does not fetch. `--dry` prices it first, `--force` re-embeds everything. |
 | `npm run match` | Rank the corpus by similarity to your resume. `--top N`, `--us`, `--remote`, `--company <slug>`, `--min 0.4`, `--json`. `--to-fresh` writes results into `fresh.jsonl` for `fitness.js`. `--all` skips the title filter; `--raw` uses uncentred cosine, for comparison. |
 | `npm test` | Run the test suite — Node's built-in runner over `test/`. No dependencies. |
 | `npm run check-docs` | Fails if this README has drifted from the code — an undocumented script, flag, or data file. |
@@ -350,7 +352,7 @@ variance, so treat a score as a bucket, not a measurement.
 
 The **similar** tab shows pipeline 2 instead: the whole corpus ranked by embedding
 similarity to your resume, with a `state` column for what pipeline 1 has done with each
-one, and a **send to scorers** button on anything unseen. It needs `npm run similarity` to have run; without vectors it says so.
+one, and a **send to scorers** button on anything unseen. It needs `npm run poll` and `npm run similarity` to have run; without vectors it says so.
 
 `ui.html` is a template the server reads per request; edit it and refresh, no restart.
 Opening it as a file directly shows "nothing here" — it needs the server.
@@ -360,13 +362,16 @@ Opening it as a file directly shows "nothing here" — it needs the server.
 ## Pipeline 2 — embeddings
 
 ```powershell
+npm run poll
+```
+```powershell
 npm run similarity
 ```
 ```powershell
 npm run match -- --us --top 40
 ```
 
-`crawl.js` stores every posting from every board, filtered by nothing. `embed.js`
+`poll` stores every posting from every board, filtered by nothing. `similarity`
 embeds anything without a current vector — dedupe is by **content hash of the exact
 text embedded**, so a re-listed posting is skipped and an edited one re-embeds
 automatically. Haiku transcribes `resume.pdf` to text once (cached in

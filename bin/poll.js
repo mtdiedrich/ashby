@@ -1,4 +1,8 @@
-// Stage 1 — refresh the corpus, then stage today's candidates for scoring.
+// Stage 1 — the only thing that talks to the job boards.
+//
+// Fetches every posting from every board into corpus.jsonl, then stages the ones
+// worth scoring into fresh.jsonl. fitness, coverage and similarity all read from
+// what this stored; none of them fetch.
 //
 //   npm run poll                normal daily run
 //   npm run poll -- --no-crawl  select from the corpus as it stands, fetch nothing

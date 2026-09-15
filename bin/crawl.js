@@ -91,4 +91,4 @@ const fresh = added.filter(r => !known.has(r.id)).length;
 console.log(`${ok} boards ok, ${dead} dead, ${seenTotal} postings seen`);
 console.log(`  ${fresh} new, ${added.length - fresh} changed, ${unchanged} unchanged`);
 console.log(`  corpus.jsonl now holds ${corpus().size} postings`);
-if (added.length) console.log(`\nNext: npm run poll  (or npm run similarity to embed)`);
+if (added.length) console.log(`\nNext: npm run fitness`);
