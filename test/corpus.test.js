@@ -36,3 +36,21 @@ test('asPosting converts corpus shape to the shape the scorers read', async () =
   assert.equal(out.similarity, 0.5);
   assert.equal('company' in out, false, 'must not carry corpus field names through');
 });
+
+test('embedText reads either record shape and produces the same text', async () => {
+  // fresh.jsonl holds poll-shaped records (slug/descriptionPlain); corpus.jsonl holds
+  // corpus-shaped ones (company/description). embed.js now works off the worklist, so
+  // if these disagree every posting re-embeds on the next run and the hash cache is
+  // worthless.
+  const { embedText, asPosting } = await load();
+  const rec = corpusRecord({ id: 'x', company: 'acme', description: 'Train models at scale.' });
+  const posting = asPosting(rec, null, () => null);
+  assert.equal(embedText(posting), embedText(rec));
+});
+
+test('embedText survives a record missing the optional parts', async () => {
+  const { embedText } = await load();
+  const text = embedText({ id: 'y', title: 'ML Engineer', slug: 'acme', location: 'Remote' });
+  assert.match(text, /ML Engineer/);
+  assert.match(text, /acme/);
+});

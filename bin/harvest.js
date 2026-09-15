@@ -1,7 +1,9 @@
 // Stage 0 — validate candidate slugs and merge them into slugs.txt.
 //
 //   npm run harvest                 validate raw.txt + re-check slugs.txt
-//   npm run harvest -- --hn         pull candidates off Hacker News first
+//   npm run harvest -- --discover   pull candidates off Hacker News and GitHub
+//   npm run harvest -- --hn         Hacker News only
+//   npm run harvest -- --github     GitHub code search only
 //   npm run harvest -- --no-recheck skip re-validating slugs already in slugs.txt
 //   npm run harvest -- <file>       validate a specific file (repeatable)
 //
@@ -12,13 +14,15 @@
 // valid slug and is kept (they post again later).
 
 import fs from 'node:fs';
-import { fromHackerNews } from '../lib/discover.js';
+import { fromHackerNews, fromGitHub } from '../lib/discover.js';
 import { P } from '../lib/paths.js';
 
 const CONCURRENCY = 12;
 const args     = process.argv.slice(2);
 const recheck  = !args.includes('--no-recheck');
 const useHn    = args.includes('--hn');
+const useGh    = args.includes('--github');
+const useAll   = args.includes('--discover');
 const files    = args.filter(a => !a.startsWith('--'));
 const sources  = files.length ? files : [P.raw];
 
@@ -39,7 +43,7 @@ const normalise = (s) => {
 const existing = new Set(read(P.slugs).map(normalise).filter(Boolean));
 const incoming = new Set(sources.flatMap(read).map(normalise).filter(Boolean));
 
-if (useHn) {
+if (useHn || useAll) {
   // Hacker News "Who is hiring" threads are dense with Ashby apply links, and
   // Algolia indexes every comment behind a public API — no browser, no CAPTCHA.
   console.log('searching Hacker News for Ashby boards...');
@@ -47,6 +51,16 @@ if (useHn) {
   process.stderr.write('\n');
   for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
   console.log(`  ${found.size} slugs mentioned on HN`);
+}
+
+if (useGh || useAll) {
+  // ~32k indexed files mention jobs.ashbyhq.com. The search API returns the matching
+  // fragment, so the slugs come out of the results without fetching any file.
+  console.log('searching GitHub code for Ashby boards (rate limited, a few minutes)...');
+  const found = await fromGitHub(msg => process.stderr.write(msg + '   \r'));
+  process.stderr.write('\n');
+  for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
+  console.log(`  ${found.size} slugs found on GitHub`);
 }
 
 const toCheck = recheck ? new Set([...existing, ...incoming])

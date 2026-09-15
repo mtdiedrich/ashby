@@ -1,13 +1,20 @@
-// Pipeline 2, stage 2 — embed anything in the corpus that is not already embedded.
+// Embed the staged postings and the resume, so similarity can be scored.
 //
-//   node embed.js           embed new/changed postings and the resume
-//   node embed.js --dry     report what would be embedded, call nothing
-//   node embed.js --force   re-embed everything (after changing the model or embedText)
+//   npm run similarity              embed anything on the worklist without a vector
+//   npm run similarity -- --dry     report what would be embedded, call nothing
+//   npm run similarity -- --force   re-embed regardless (after changing the model)
+//   npm run similarity -- --corpus  embed the whole corpus, not just the worklist
+//
+// Works off fresh.jsonl, the same worklist fitness and coverage read. The corpus runs
+// to tens of thousands of postings and embedding all of them to score a hundred is
+// waste — --corpus is there if you want the wider net back.
 //
 // Nothing is embedded twice. Each vector is stored against the content hash of the
-// exact text it was made from, so a posting that gets re-listed unchanged is skipped,
-// and one whose description was edited is re-embedded automatically.
+// exact text it was made from, so a posting re-listed unchanged is skipped and one
+// whose description was edited re-embeds automatically.
 
+import fs from 'node:fs';
+import { P } from '../lib/paths.js';
 import { corpus, embedText, hash } from '../lib/corpus.js';
 import { embedAll, EMBED_MODEL } from '../lib/embed.js';
 import { resumeText } from '../lib/resume-text.js';
@@ -16,16 +23,23 @@ import { progress } from '../lib/progress.js';
 
 const DRY = process.argv.includes('--dry');
 const FORCE = process.argv.includes('--force');
+const WHOLE_CORPUS = process.argv.includes('--corpus');
 
-const jobs = corpus();
+const readJsonl = f => fs.existsSync(f)
+  ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
+  : [];
 
-// embed.js does not fetch. poll.js is the only thing that refreshes the corpus, so
-// say so when it looks stale rather than quietly vectorising yesterday's postings.
-{
-  const newest = [...jobs.values()].reduce((a, p) => (p.fetchedAt ?? '') > a ? p.fetchedAt : a, '');
-  const hours = newest ? (Date.now() - new Date(newest)) / 3.6e6 : Infinity;
-  if (!jobs.size) console.warn('corpus is empty — run: npm run poll');
-  else if (hours > 24) console.warn(`⚠  corpus last refreshed ${Math.round(hours)}h ago — run: npm run poll`);
+// The worklist by default — the same postings fitness and coverage score. embedText
+// reads either record shape, so a posting hashes the same whether it came from
+// fresh.jsonl or the corpus, and switching between them re-embeds nothing.
+const jobs = WHOLE_CORPUS
+  ? corpus()
+  : new Map(readJsonl(P.fresh).map(j => [j.id, j]));
+
+if (!jobs.size) {
+  console.log(WHOLE_CORPUS ? 'corpus is empty — run: npm run poll'
+                           : 'fresh.jsonl is empty — run: npm run poll');
+  process.exit(0);
 }
 const stored = vec.load();
 
@@ -42,7 +56,7 @@ for (const [id, p] of jobs) {
   pending.push({ key, hash: h, text, why: have ? 'changed' : 'new' });
 }
 
-console.log(`corpus: ${jobs.size} postings`);
+console.log(`${jobs.size} postings ${WHOLE_CORPUS ? 'in the corpus' : 'on the worklist'}`);
 console.log(`  already embedded: ${upToDate}`);
 console.log(`  to embed:         ${pending.length}` +
   (pending.length ? `  (${pending.filter(p => p.why === 'new').length} new, ${pending.filter(p => p.why === 'changed').length} changed)` : ''));

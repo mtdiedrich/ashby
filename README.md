@@ -173,11 +173,11 @@ sorted by variance, not by fit.
 | `npm run score` | All three scorers over the worklist. |
 | `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`. |
 | `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`. |
-| `npm run similarity` | Embed anything whose text changed, plus the resume. `--dry`, `--force`. |
+| `npm run similarity` | Embed the staged postings and the resume, so they have a similarity score. `--dry` prices it first, `--force` re-embeds regardless, `--corpus` embeds the whole corpus rather than just the worklist. |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run apply` | Fill the queued forms. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`. |
 | `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
-| `npm run harvest` | Find and validate new company boards. `--hn` scrapes Hacker News for them first; otherwise reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
+| `npm run harvest` | Find and validate new company boards. `--discover` searches both sources, `--hn` Hacker News only, `--github` GitHub code search only; with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
 | `npm run test-fill` | Run the form filler headless against any apply URL. No model, no submit. |
 | `npm run check-docs` | Fail if this README has drifted from the code. |
 | `npm test` | The suite. |
@@ -249,14 +249,19 @@ move data\fitness.jsonl data\fitness.old.jsonl
 how many slugs you know.
 
 ```powershell
-npm run harvest -- --hn
+npm run harvest -- --discover
 ```
 
-Hacker News is the best source and the only automatable one. The monthly "Who is
-hiring" threads are thick with Ashby apply links, and Algolia indexes every comment
-behind a public API — no browser, no CAPTCHA, no key. One pass took this project from
-87 boards to 346. Slugs are validated before they are kept; a link from a two-year-old
-comment is often a company that has since moved ATS or folded.
+Two automatable sources, neither needing a browser. **Hacker News** — the monthly "Who
+is hiring" threads are thick with Ashby apply links and Algolia indexes every comment
+behind a public API. **GitHub code search** — some 32,000 indexed files mention
+`jobs.ashbyhq.com`, and the API returns the matching text fragment, so slugs come
+straight out of the search results without fetching a single file. GitHub allows 10
+code-search requests a minute, so that half takes ten minutes of mostly waiting.
+
+Together they took this project from 87 boards to 1,408. Slugs are validated before
+they are kept — a link from an old comment is often a company that has since moved ATS
+or folded, and 349 of the candidates were dead.
 
 Re-run it occasionally. It is cheap, and each new board arrives with its whole back
 catalogue, so expect a burst of old postings the first time one appears.
