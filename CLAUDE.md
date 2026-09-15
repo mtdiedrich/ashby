@@ -93,8 +93,17 @@ earlier explanation was wrong.
 - **Nothing auto-queues.** `score.js` ranks. `queue.jsonl` is written only when the
   user picks something in the UI. `apply.js` reads only `queue.jsonl`.
 - **Nothing submits an application.** `apply.js` fills and stops.
-- **Nothing ticks a checkbox.** On these forms they are arbitration agreements,
-  truthfulness certifications, and demographic self-identification.
+- **Nothing agrees to anything.** Arbitration agreements, truthfulness
+  certifications, consent and acknowledgement boxes are never ticked, whatever
+  widget they use. These commit the user to something.
+- **Self-identification is declined, never answered.** Gender, ethnicity/race,
+  veteran and disability fields get the field's own "decline to answer" option and
+  nothing else — see `declineIndex` in `lib/fill.browser.js`. If the field offers
+  no way to decline, it is left empty. The safety property is that the matcher
+  requires an explicit verb of declining, so it cannot select "I am not a protected
+  Veteran" or "No, I do not have a disability" — both of which would be the tool
+  asserting something about the user. Any change there needs `test/eeo.test.js`
+  extended first.
 - **Nothing invents the user's details.** The model skips rather than guesses; a gap
   is better than a fabricated answer on a job application.
 

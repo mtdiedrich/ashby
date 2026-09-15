@@ -72,9 +72,13 @@ Return one step per field you were given. Rules:
   a real decision. Never generic enthusiasm. Respect maxLength when given. Never invent an
   employer, a degree, a date, or a metric that is not in the context.
 - action "skip": use it whenever you cannot answer from the context — file uploads, signatures,
-  demographic/EEOC questions, salary expectations not stated in the context, anything about the
-  candidate's private information that was not provided. value is a short reason.
+  salary expectations not stated in the context, anything about the candidate's private
+  information that was not provided. value is a short reason.
   Skipping is correct and expected. A plausible-sounding guess is worse than a red outline.
+- ALWAYS skip voluntary self-identification questions (gender, ethnicity or race, veteran
+  status, disability). A deterministic pass has already selected the "decline to answer"
+  option on every one of those that offered it, so any that reach you offered no such
+  option. Never state one of these on the candidate's behalf.
 
 <candidate_context>
 ${NO_MODEL ? '' : context()}

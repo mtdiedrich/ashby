@@ -202,11 +202,23 @@ Fields the model wrote are outlined **gold** — read them, they're a first draf
 it refused are **red**:
 
 - **File uploads** beyond the resume.
-- **Checkboxes, always.** On these forms they are arbitration agreements, "I hereby
-  certify that the answers given by me are true", and demographic self-identification.
-  Nothing in this repo ticks one.
+- **Agreements and certifications, always.** Arbitration clauses, "I hereby certify
+  that the answers given by me are true", consent boxes. Nothing in this repo agrees
+  to anything on your behalf.
 - **Anything not answerable from `context.md`.** The model skips rather than guessing,
   because a plausible invented answer on a job application is worse than a gap.
+
+**Self-identification questions are handled deterministically, before the model sees
+them.** Gender, ethnicity/race, veteran status and disability are set to that field's
+own decline option — "Decline to Self Identify", "I don't wish to answer", "I prefer
+not to answer", whatever the board happens to call it. The wording differs per field
+and per board, so this matches a phrase rather than a literal.
+
+It only ever selects an option that explicitly declines. If a board offers no way to
+decline, the field is left red for you. It will never select "I am not a protected
+Veteran" or "No, I do not have a disability" — those are substantive answers, and the
+tool does not make claims about you. Set `"declineSelfIdentify": false` in `me.json`
+if you would rather answer these yourself.
 
 Then it stops. You fix the red fields, submit, and press Enter for the next one.
 
