@@ -23,6 +23,10 @@ const scripts = fs.readdirSync(at('bin'))
 
 const problems = [];
 
+// Scripts that are implementation details of an npm command rather than commands
+// themselves. Their flags need no user-facing documentation.
+const INTERNAL = new Set(['crawl.js', 'embed.js']);
+
 // ---- scripts documented -------------------------------------------------
 // A script counts as documented under either name: bin/poll.js or 'npm run poll'.
 const documented = s => readme.includes(s) || readme.includes('npm run ' + s.replace(/.js$/, ''));
@@ -35,6 +39,7 @@ for (const s of scripts) {
 // here parses its options.
 for (const s of scripts) {
   const src = fs.readFileSync(at('bin/' + s), 'utf8');
+  if (INTERNAL.has(s)) continue;
   const flags = new Set([...src.matchAll(/(?:includes|indexOf)\(\s*'(--[a-z-]+)'/g)].map(m => m[1]));
   for (const f of flags) {
     if (!readme.includes(f)) problems.push(`flag not documented: ${s} ${f}`);

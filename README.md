@@ -197,17 +197,13 @@ have been open for months. `MAX_AGE_DAYS` in `poll.js` caps that if you want it.
 
 ### I want to see postings ranked by embedding similarity
 
-First time only — fetch every posting and embed them. `crawl.js` takes about a minute,
-`embed.js` about four and costs ~$0.16:
+First time only — fetch every posting and embed them. About five minutes, ~$0.16:
 
 ```powershell
-npm run crawl
-```
-```powershell
-npm run embed
+npm run similarity
 ```
 
-Then browse them in the UI — the **similar** tab next to **scored**:
+Then browse them on the board:
 
 ```powershell
 npm run ui
@@ -243,12 +239,12 @@ npm run match -- --us --top 25 --all
 ML at all — sometimes the point of having the broad net. `--raw` turns off centring if
 you want to see what the uncentred scores look like.
 
-Keeping it current is the same two commands — `crawl.js` picks up new and changed
-postings, `embed.js` only embeds what actually changed, so a daily refresh is seconds
-and fractions of a cent:
+Keeping it current is the same one command — it picks up new and changed postings and
+embeds only what actually changed, so a daily refresh is seconds and fractions of a
+cent:
 
 ```powershell
-npm run crawl; if ($?) { npm run embed }
+npm run similarity
 ```
 
 ### I want the broad net judged properly, not just ranked
@@ -302,7 +298,7 @@ npm run apply -- --url https://jobs.ashbyhq.com/<company>/<id>/application --no-
 ### I edited my resume
 
 ```powershell
-npm run embed
+npm run similarity
 ```
 Re-transcribes the PDF and re-embeds it. Scoring picks up the new PDF automatically —
 it's sent as a document on every call, so there's nothing to regenerate.
@@ -322,9 +318,7 @@ it's sent as a document on every call, so there's nothing to regenerate.
 | `npm run show` | Same data in the terminal. `--why` for reasoning without descriptions, plus `--queued`, `--unqueued`, `--full`, `--history`, or a company/keyword for detail. |
 | `npm run apply` | Fill the forms in `queue.jsonl`. `--no-model` runs the deterministic rules only (no API call), `--limit N`, `--url <apply-url>` for a one-off. |
 | `npm run test-fill -- <url>` | Run the form filler headless against any apply URL with placeholder data. No model, no submit. |
-| `npm run similarity` | Refresh the corpus and embed whatever changed — `crawl` then `embed` in one command. |
-| `npm run crawl` | Pipeline 2. Every posting on every board, unfiltered, into `corpus.jsonl`. `--stats` reports what's stored. |
-| `npm run embed` | Embed anything new or changed, plus the resume. `--dry` prices it first, `--force` re-embeds everything. |
+| `npm run similarity` | Fetch every posting from every board into `corpus.jsonl`, then embed whatever changed. This is the only thing that talks to the job boards; `poll` selects from what it stored. |
 | `npm run match` | Rank the corpus by similarity to your resume. `--top N`, `--us`, `--remote`, `--company <slug>`, `--min 0.4`, `--json`. `--to-fresh` writes results into `fresh.jsonl` for `fitness.js`. `--all` skips the title filter; `--raw` uses uncentred cosine, for comparison. |
 | `npm test` | Run the test suite — Node's built-in runner over `test/`. No dependencies. |
 | `npm run check-docs` | Fails if this README has drifted from the code — an undocumented script, flag, or data file. |
@@ -356,8 +350,7 @@ variance, so treat a score as a bucket, not a measurement.
 
 The **similar** tab shows pipeline 2 instead: the whole corpus ranked by embedding
 similarity to your resume, with a `state` column for what pipeline 1 has done with each
-one, and a **send to scorers** button on anything unseen. It needs `crawl.js` and
-`embed.js` to have run; without vectors it says so.
+one, and a **send to scorers** button on anything unseen. It needs `npm run similarity` to have run; without vectors it says so.
 
 `ui.html` is a template the server reads per request; edit it and refresh, no restart.
 Opening it as a file directly shows "nothing here" — it needs the server.
@@ -367,10 +360,7 @@ Opening it as a file directly shows "nothing here" — it needs the server.
 ## Pipeline 2 — embeddings
 
 ```powershell
-npm run crawl
-```
-```powershell
-npm run embed
+npm run similarity
 ```
 ```powershell
 npm run match -- --us --top 40

@@ -16,8 +16,6 @@
     "harvest": "node bin/harvest.js",
     "test-fill": "node bin/test-fill.js",
     "check-docs": "node bin/check-docs.js",
-    "crawl": "node bin/crawl.js",
-    "embed": "node bin/embed.js",
     "test": "node --test test/",
     "test:watch": "node --test --watch test/"
   },
