@@ -18,7 +18,7 @@
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
-import { corpus, embedText, hash, rawLineCount } from '../lib/corpus.js';
+import { corpus, embedText, hash, rawLineCount, compactCorpus } from '../lib/corpus.js';
 import { jobsFlag } from '../lib/pool.js';
 import { ATS, keepDescription } from '../lib/ats.js';
 
@@ -30,6 +30,16 @@ const STATS_ONLY = process.argv.includes('--stats');
 // --full stores every description, the way this worked before the corpus reached
 // 380 MB. Expect roughly a gigabyte per 170,000 postings.
 const FULL = process.argv.includes('--full');
+// Rewrite the corpus dropping superseded rows, and stop. Normally automatic, but
+// worth having by hand after a change that rewrote a lot of records.
+const COMPACT_ONLY = process.argv.includes('--compact');
+
+if (COMPACT_ONLY) {
+  const r = compactCorpus();
+  console.log(`corpus.jsonl: ${r.before.toLocaleString()} rows → ${r.after.toLocaleString()} postings`);
+  console.log(`  ${(r.bytesBefore / 1048576).toFixed(0)} MB → ${(r.bytesAfter / 1048576).toFixed(0)} MB`);
+  process.exit(0);
+}
 
 if (STATS_ONLY) {
   const c = corpus();
@@ -112,6 +122,22 @@ await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
 
 if (added.length) {
   fs.appendFileSync(P.corpus, added.map(r => JSON.stringify(r)).join('\n') + '\n');
+}
+
+// The corpus is append-only, so a re-crawl that changes many postings at once leaves
+// every superseded row behind. One storage-policy change rewrote 60,903 of them, the
+// file passed Node's 512 MB string limit, and every command that reads it died at
+// once. Compact when the dead weight is worth the rewrite, or when the file is
+// approaching that limit — whichever comes first.
+{
+  const bytes = fs.existsSync(P.corpus) ? fs.statSync(P.corpus).size : 0;
+  const live = corpus().size;
+  const total = rawLineCount();
+  if (total > live * 1.25 || bytes > 0x1fffffe8 * 0.75) {
+    process.stdout.write(`  compacting ${total.toLocaleString()} rows down to ${live.toLocaleString()} postings...`);
+    const r = compactCorpus();
+    console.log(` ${(r.bytesBefore / 1048576).toFixed(0)} MB → ${(r.bytesAfter / 1048576).toFixed(0)} MB`);
+  }
 }
 
 const fresh = added.filter(r => !known.has(r.id)).length;

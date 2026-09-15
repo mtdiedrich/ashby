@@ -345,6 +345,17 @@ postings cost 715 bytes each this way instead of 5,814.
 
 `npm run poll -- --full` keeps every description, if you want the old behaviour.
 
+**The corpus compacts itself.** It is append-only — a posting re-crawled with changed
+content is written again and readers take the newest — so a change that touches many
+postings at once leaves every superseded row behind. Introducing the policy above
+rewrote 60,903 Ashby rows in one pass, the file reached 555 MB, and it crossed Node's
+maximum string length (about 512 MB), at which point `poll`, `crawl` and the board all
+died with `ERR_STRING_TOO_LONG`.
+
+Nothing reads the file as one string any more, and `crawl` now rewrites it whenever
+the dead rows exceed a quarter of the live ones, or the file nears that limit. That
+took 555 MB back to 189 MB. `node bin/crawl.js --compact` forces it by hand.
+
 ### Postal address
 
 Boards ask for one on about 1% of forms — 2 of 178 scanned — and when they do it is a

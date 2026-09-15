@@ -151,6 +151,18 @@ prefixing would orphan them along with every fitness, coverage and vector record
 keyed to them. Greenhouse ids carry a `greenhouse:` prefix because theirs are small
 integers.
 
+**Never read a data file with `readFileSync(f, 'utf8')`.** Node caps a string at
+0x1fffffe8 (~512 MB) and corpus.jsonl passed it, taking down poll, crawl and the
+board at once with ERR_STRING_TOO_LONG. Use `linesOf()` in `lib/corpus.js`, which
+streams with a StringDecoder so a multi-byte character across a chunk boundary is
+not silently turned into replacement characters.
+
+**The corpus is append-only, so it has to be compacted.** A change that alters how
+records are written rewrites every posting it touches and leaves the old rows behind;
+that is what crossed the limit above. `compactCorpus()` keeps the newest row per id,
+via a temp file and a rename so a failure leaves the original intact. crawl runs it
+automatically past 1.25x dead rows.
+
 **The corpus does not store every description.** It holds metadata for everything and
 descriptions only for titles `wantedTitle` passes; anything else is marked
 `descriptionStored: false` and fetched on demand when staged. An empty description is
