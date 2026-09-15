@@ -17,11 +17,23 @@ import { chromium } from 'playwright';
 import { z } from 'zod';
 import { ask, context, MODEL } from '../lib/ai.js';
 import { resumeBlock, resumeFile } from '../lib/resume.js';
+import { appliedIds, dropFromQueue } from '../lib/applog.js';
+
+const readJsonl = f => fs.existsSync(f)
+  ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
+  : [];
 
 const argv     = process.argv.slice(2);
 const NO_MODEL = argv.includes('--no-model');
 const LIMIT    = argv.includes('--limit') ? Number(argv[argv.indexOf('--limit') + 1]) : Infinity;
 const ONE_URL  = argv.includes('--url') ? argv[argv.indexOf('--url') + 1] : null;
+
+// How long to wait for Ashby's own resume parser before giving up and using me.json.
+// Boards that backfill do it in about a second; boards that never will used to cost
+// 15 seconds each. --wait-parse raises it if you hit a slow one.
+const RESUME_PARSE_MS = argv.includes('--wait-parse')
+  ? Number(argv[argv.indexOf('--wait-parse') + 1]) * 1000
+  : 3000;
 
 const FILL_SRC = fs.readFileSync(new URL('../lib/fill.browser.js', import.meta.url), 'utf8');
 
@@ -120,13 +132,24 @@ for (const [i, job] of queue.entries()) {
     const resumeInput = page.locator('[data-field-path="_systemfield_resume"] input[type=file]').first();
     if (await resumeInput.count()) {
       await resumeInput.setInputFiles(resumeFile());
-      // Ashby parses the resume server-side and backfills name/email; give it a
-      // moment, then wait for the name field to actually populate.
-      await page.waitForFunction(
+      // Ashby parses the resume server-side and backfills name/email on SOME boards.
+      // Waiting for that is an optimisation, not a requirement — the rules fill both
+      // from me.json regardless. The only reason to wait at all is that a late
+      // backfill would overwrite what we typed.
+      //
+      // This was a 15s timeout, and on a board that never backfills it burned all 15
+      // every time: measured at 15,002ms of a 20,337ms startup, 74% of the wait
+      // before the model was even called. Boards that do backfill do it in ~1s.
+      const waited = Date.now();
+      const backfilled = await page.waitForFunction(
         () => document.querySelector('[data-field-path="_systemfield_name"] input')?.value?.trim(),
-        null, { timeout: 15_000 },
-      ).catch(() => console.log('  (resume autofill did not populate name — filling it from me.json)'));
+        null, { timeout: RESUME_PARSE_MS },
+      ).then(() => true).catch(() => false);
+      console.log(backfilled
+        ? `  resume parsed by Ashby in ${Date.now() - waited}ms`
+        : `  (Ashby did not autofill from the resume — using me.json)`);
       record.resumeUploaded = true;
+      record.resumeBackfill = backfilled;
     } else {
       console.log('  (no resume field on this form)');
     }
@@ -175,21 +198,42 @@ for (const [i, job] of queue.entries()) {
     record.error = e.message;
   }
 
+  // Ask before writing anything, so the record says what actually happened rather
+  // than "this tab was opened". apply.js never submits, so this is your answer, not
+  // an observation — there is nothing else it could be.
+  // If the prompt cannot be answered — stdin closed, input piped, terminal gone —
+  // fall through to "not submitted" and still write the record. Asking first means a
+  // failure here would otherwise lose the whole record, which is what the old
+  // write-then-ask order protected against.
+  const a = await prompt(
+    '\n  Submitted?  [y] yes · [n] no, move on · [k] not yet, keep it queued · [s] stop here: '
+  ).then(x => String(x).trim().toLowerCase())
+   .catch(() => { console.log('\n  (no answer possible — recording as not submitted)'); return 'n'; });
+
+  record.submitted = a === 'y';
+  if (record.submitted) record.submittedAt = new Date().toISOString();
+
+  // Written per posting, not at the end of the run. Interrupting a run used to throw
+  // away every queue removal, so the next run reopened everything already dealt with.
   fs.appendFileSync(P.log, JSON.stringify(record) + '\n');
+
+  // 'k' leaves it queued for next time; everything else is finished with.
+  if (!ONE_URL && a !== 'k') {
+    const rest = dropFromQueue(readJsonl(P.queue), job.id);
+    fs.writeFileSync(P.queue, rest.map(j => JSON.stringify(j)).join('\n') + (rest.length ? '\n' : ''));
+    console.log(`  recorded${record.submitted ? ' as submitted' : ''} · ${rest.length} left in the queue`);
+  } else if (a === 'k') {
+    console.log('  left in the queue for next time');
+  }
   done.push(job.id);
 
-  const a = (await prompt('  [Enter] next · [s]kip rest · [k]eep tab open: ')).trim().toLowerCase();
   if (a !== 'k') await page.close().catch(() => {});
   if (a === 's') break;
 }
 
-// Drop everything we opened from the queue so a re-run does not reopen it.
-if (!ONE_URL && done.length) {
-  const rest = fs.readFileSync(P.queue, 'utf8').split('\n').filter(Boolean)
-    .map(l => JSON.parse(l)).filter(j => !done.includes(j.id));
-  fs.writeFileSync(P.queue, rest.map(j => JSON.stringify(j)).join('\n') + (rest.length ? '\n' : ''));
-  console.log(`\n${done.length} processed, ${rest.length} left in queue.jsonl`);
-}
+const sent = done.length && fs.existsSync(P.log)
+  ? appliedIds(readJsonl(P.log).filter(r => done.includes(r.job))).size : 0;
+console.log(`\n${done.length} opened, ${sent} submitted`);
 
 rl.close();
 await ctx.close();

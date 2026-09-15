@@ -31,6 +31,7 @@ import { tidy } from '../lib/text.js';
 import { corpus, asPosting } from '../lib/corpus.js';
 import { wantedTitle, usLocation } from '../lib/filters.js';
 import { topUnscored } from '../lib/select.js';
+import { appliedIds, openedIds } from '../lib/applog.js';
 import { composite } from '../lib/composite.js';
 import { salaryOf } from '../lib/comp.js';
 import * as vec from '../lib/vec.js';
@@ -75,7 +76,12 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
   const fit = newestById(read(P.fitness), 'scoredAt');
   const cov = newestById(read(P.coverage), 'at');
   const queued = new Set(read(P.queue).map(r => r.id));
-  const applied = new Set(read(P.log).map(r => r.job));
+  // Applied means you told apply.js you submitted it. Opening a tab and closing it
+  // without sending anything is its own state — counting that as applied made the
+  // board claim applications that were never made.
+  const log = read(P.log);
+  const applied = appliedIds(log);
+  const opened = openedIds(log);
   const staged = new Set(read(P.fresh).map(r => r.id));
   const dismissed = new Set(read(P.dismissed).map(r => r.id));
 
@@ -132,7 +138,8 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
 
       similarity: sv ? vec.dot(resumeV, vec.centre(sv.v, v.mu)) : null,
 
-      state: applied.has(id) ? 'applied' : queued.has(id) ? 'queued'
+      state: applied.has(id) ? 'applied' : opened.has(id) ? 'opened'
+           : queued.has(id) ? 'queued'
            : dismissed.has(id) ? 'dismissed' : staged.has(id) ? 'staged'
            : (f || k) ? 'judged' : 'unseen',
     });
@@ -157,6 +164,7 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
       value: scored.filter(r => r.value != null).length,
       queued: scored.filter(r => r.state === 'queued').length,
       applied: scored.filter(r => r.state === 'applied').length,
+      opened: scored.filter(r => r.state === 'opened').length,
     },
     generatedAt: new Date().toISOString(),
   };

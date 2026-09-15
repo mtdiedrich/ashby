@@ -61,6 +61,7 @@
            padding: 2px 7px; border-radius: 4px; white-space: nowrap; display: inline-block; }
   .st-queued { background: var(--good); color: #fff; }
   .st-applied { background: var(--accent); color: #fff; }
+  .st-opened { background: var(--warn); color: #fff; opacity: .7; }
   .st-judged { background: var(--warn); color: #fff; }
   .st-staged { background: var(--accent); color: #fff; opacity: .65; }
   .st-unseen { background: var(--chip); color: var(--muted); }
@@ -172,7 +173,7 @@ async function load() {
   TOTAL = d.total;
   document.getElementById('stamp').textContent =
     d.total + ' postings · ' + d.counts.fitness + ' fitness · ' + d.counts.coverage +
-    ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.value + ' ranked · ' + d.counts.queued + ' queued';
+    ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.value + ' ranked · ' + d.counts.queued + ' queued · ' + d.counts.applied + ' submitted';
   const more = document.getElementById('more');
   more.hidden = JOBS.length >= TOTAL;
   more.textContent = 'show more (' + JOBS.length + ' of ' + TOTAL + ')';
@@ -218,7 +219,9 @@ function render() {
           : '');
 
     const act = j.state === 'applied'
-      ? '<span class="meta">already opened in apply.js</span>'
+      ? '<span class="meta">submitted</span>'
+      : j.state === 'opened'
+        ? '<span class="meta">opened in apply.js, not submitted</span>'
       : j.state === 'queued'
         ? '<button class="act drop" data-q="0">remove from queue</button>'
         : '<button class="act primary" data-q="1">queue for application</button>';

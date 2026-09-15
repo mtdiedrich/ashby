@@ -175,7 +175,7 @@ sorted by variance, not by fit.
 | `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`, `--jobs N` (requests at once, default 6). |
 | `npm run similarity` | Embed the staged postings and the resume, so they have a similarity score. `--dry` prices it first, `--force` re-embeds regardless, `--corpus` embeds the whole corpus rather than just the worklist. |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
-| `npm run apply` | Fill the queued forms. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`. |
+| `npm run apply` | Fill the queued forms, then ask whether you submitted each one. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`, `--wait-parse N` (seconds to wait for Ashby's resume parser, default 3). |
 | `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
 | `npm run harvest` | Find and validate new company boards. `--discover` searches all three sources; `--wayback`, `--hn`, `--github` each pick one; with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
 | `npm run test-fill` | Run the form filler headless against any apply URL. No model, no submit. |
@@ -278,7 +278,36 @@ Veteran" or "No, I do not have a disability" — those are substantive answers, 
 tool does not make claims about you. Set `"declineSelfIdentify": false` in `me.json`
 if you would rather answer these yourself.
 
-Then it stops. You fix the red fields, submit, and press Enter for the next one.
+Then it stops and asks:
+
+```
+  Submitted?  [y] yes · [n] no, move on · [k] not yet, keep it queued · [s] stop here:
+```
+
+Nothing here submits anything, so this is your answer rather than something the tool
+can observe. It is recorded **as you answer**, one posting at a time — a run you
+interrupt keeps everything you already dealt with.
+
+| | |
+|---|---|
+| `y` | logged as submitted, dropped from the queue, shows **submitted** on the board |
+| `n` | logged, dropped from the queue, shows **opened** — seen, not sent |
+| `k` | stays in the queue and the tab stays open, so the next run reopens it |
+| `s` | stops the run; the rest of the queue is untouched |
+
+The board separates the two: **submitted** means you said yes. Opening a form and
+closing it used to count as applying, which made the board claim applications that
+were never made.
+
+### Startup delay
+
+`apply` waits for Ashby's own resume parser to backfill your name before it starts
+filling, because a late backfill would overwrite what it typed. Boards that do this
+take about a second. Boards that never do it used to cost a flat 15 seconds each —
+measured at 15,002ms of a 20,337ms startup. The wait is now 3 seconds and it says
+which happened; `--wait-parse N` raises it if you hit a slow board.
+
+
 
 If a red field needs real work, leave it paused — Chrome runs with
 `--remote-debugging-port=9222`, so you can attach Claude Code to the live tab:

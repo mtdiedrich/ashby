@@ -104,6 +104,11 @@ earlier explanation was wrong.
   Veteran" or "No, I do not have a disability" — both of which would be the tool
   asserting something about the user. Any change there needs `test/eeo.test.js`
   extended first.
+- **Nothing records a submission the user did not confirm.** `apply.js` cannot
+  observe a submit — it never submits — so `log.jsonl`'s `submitted` field is the
+  user's answer to a prompt, nothing else. Treating "a tab was opened" as an
+  application made the board claim applications that were never made. Records are
+  written per posting, as answered, so an interrupted run keeps what it did.
 - **Nothing invents the user's details.** The model skips rather than guesses; a gap
   is better than a fabricated answer on a job application.
 - **An ask is not a floor.** `me.json`'s `salaryExpectation`/`hourlyRate` are what
