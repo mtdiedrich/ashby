@@ -31,6 +31,26 @@ filters would never see, then run those through `fitness.js`.
 
 ---
 
+## Layout
+
+```
+ashby/
+  bin/      the commands — one script per stage
+  lib/      shared modules (paths, filters, comp, select, vectors, the DOM filler)
+  test/     the suite
+  data/     everything generated: corpus, vectors, scores, queue, logs
+  config/   yours: resume.pdf, me.json, context.md
+  web/      ui.html
+  profile/  Chrome profile apply.js reuses, so logins survive between runs
+```
+
+`data/` and `config/` are gitignored — the corpus, your resume, and the job search
+itself stay local. Every path resolves through `lib/paths.js` rather than being named
+inline, so scripts work from any working directory and a file can be moved in one
+place.
+
+---
+
 ## Setup
 
 ```powershell
@@ -506,8 +526,8 @@ runs with `--remote-debugging-port=9222`, so you can attach Claude Code to the l
 npm test
 ```
 
-Node's built-in runner over `test/`. No framework, no dependency. 56 tests over the
-parts where being wrong is silent: salary parsing (hourly and monthly annualising,
+Node's built-in runner over `test/`. No framework, no dependency, covering the parts
+where being wrong is silent: salary parsing (hourly and monthly annualising,
 currency conversion, unstated pay), the title and location filters, whitespace
 normalising, the vector maths, pay-floor parsing, and candidate selection end to end.
 

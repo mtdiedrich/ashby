@@ -77,10 +77,11 @@ const shown = rows.slice(0, TOP);
 
 if (TO_FRESH) {
   const lines = shown.map(({ score, p }) => JSON.stringify(asPosting(p, score, salaryOf))).join('\n') + '\n';
+  // Only fresh.jsonl. These postings came out of the corpus, so they are already
+  // in it — and appending poll-shaped rows back would corrupt the store the
+  // scorers read from.
   fs.appendFileSync(P.fresh, lines);
-  // postings.jsonl too, or the UI has no description to show for these later.
-  fs.appendFileSync(P.corpus, lines);
-  console.log(`${shown.length} postings written to fresh.jsonl and postings.jsonl\n\nNext: npm run fitness`);
+  console.log(`${shown.length} postings staged in fresh.jsonl\n\nNext: npm run fitness`);
   process.exit(0);
 }
 

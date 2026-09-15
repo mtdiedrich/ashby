@@ -7,9 +7,9 @@
 //   node show.js --full          include the whole job description
 //   node show.js --history       every score a posting has received, not just the latest
 //
-// fitness.jsonl holds the judgements, postings.jsonl holds the postings. They join on
-// posting id. Anything polled before postings.jsonl existed will show as "(posting
-// detail not stored)" — the score is still there, only the description is missing.
+// fitness.jsonl holds the judgements, corpus.jsonl holds the postings. They join on
+// posting id. A posting judged before it entered the corpus shows as "(posting detail
+// not stored)" — the score is still there, only the description is missing.
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
@@ -112,7 +112,7 @@ if (!detail) {
     }
 
     if (!p) {
-      console.log('\n  (posting detail not stored — polled before postings.jsonl existed)');
+      console.log('\n  (posting detail not stored — judged before it entered the corpus)');
       continue;
     }
     if (FULL) {

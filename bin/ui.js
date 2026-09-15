@@ -160,7 +160,7 @@ function stage(id) {
   const c = corpus().get(id);
   const c2 = corpus().get(id);
   const rec = c2 ? asPosting(c2, null, salaryOf) : null;
-  if (!rec) return { ok: false, error: 'not in corpus or postings.jsonl' };
+  if (!rec) return { ok: false, error: 'not in the corpus' };
   if (read(P.fresh).some(r => r.id === id)) return { ok: true, already: true };
 
   const line = JSON.stringify(rec) + '\n';
