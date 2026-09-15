@@ -92,12 +92,16 @@ if (resumePending) {
 
 if (pending.length) {
   const bar = progress(pending.length, 'embedding');
-  const CHUNK = 480;   // append every ~5 batches so a crash does not lose the run
-  for (let i = 0; i < pending.length; i += CHUNK) {
-    const slice = pending.slice(i, i + CHUNK);
-    const vecs = await embedAll(slice.map(p => p.text), (done) => bar.set(i + done));
-    vec.append(slice.map((p, k) => ({ key: p.key, hash: p.hash, model: EMBED_MODEL, v: vec.normalise(vecs[k]) })));
-  }
+  // Persisted as each batch returns, so a failure part-way keeps everything bought
+  // up to that point instead of throwing the whole run away.
+  await embedAll(
+    pending.map(p => p.text),
+    done => bar.set(done),
+    (start, vectors) => vec.append(vectors.map((v, k) => {
+      const p = pending[start + k];
+      return { key: p.key, hash: p.hash, model: EMBED_MODEL, v: vec.normalise(v) };
+    })),
+  );
   bar.finish();
 }
 
