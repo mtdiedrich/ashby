@@ -1,7 +1,12 @@
-// Stage 2 — judge fresh postings against the resume and context.md.
+// Judge staged postings against the resume and context.md — should you apply.
 //
-//   node fitness.js          judge everything in fresh.jsonl
-//   node fitness.js --keep   do not truncate fresh.jsonl afterwards (for re-runs)
+//   npm run fitness              judge anything in fresh.jsonl not judged before
+//   npm run fitness -- --dry     report what would be judged, call nothing
+//   npm run fitness -- --force   re-judge even what has been judged before
+//
+// One of three scorers over the same worklist. It does not consume fresh.jsonl:
+// coverage.js reads it too, and truncating here used to leave coverage nothing to
+// do whenever fitness happened to run first.
 //
 // Postings are referenced by array index, not id: the model echoing a 36-char
 // UUID back is a chance to hallucinate one, and a wrong id silently drops a job.
@@ -13,11 +18,26 @@ import { ask, context, MODEL } from '../lib/ai.js';
 import { resumeBlock } from '../lib/resume.js';
 
 const BATCH = 8;
-const KEEP      = process.argv.includes('--keep');
+const FORCE = process.argv.includes('--force');
+const DRY   = process.argv.includes('--dry');
 
-if (!fs.existsSync(P.fresh)) { console.log('no fresh.jsonl — run poll.js first'); process.exit(0); }
-const jobs = fs.readFileSync(P.fresh, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
-if (!jobs.length) { console.log('fresh.jsonl is empty — nothing to score'); process.exit(0); }
+const readJsonl = f => fs.existsSync(f)
+  ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
+  : [];
+
+if (!fs.existsSync(P.fresh)) { console.log('no fresh.jsonl — run: npm run poll'); process.exit(0); }
+const staged = readJsonl(P.fresh);
+if (!staged.length) { console.log('fresh.jsonl is empty — run: npm run poll'); process.exit(0); }
+
+// Skip what has already been judged. fresh.jsonl is a worklist that coverage.js
+// reads too, so this must not consume it — and being idempotent is what lets the
+// three scorers run in any order without stranding each other's work.
+const already = new Set(readJsonl(P.fitness).map(r => r.id));
+const jobs = FORCE ? staged : staged.filter(j => !already.has(j.id));
+
+console.log(`${staged.length} staged · ${staged.length - jobs.length} already judged · ${jobs.length} to judge`);
+if (!jobs.length) { console.log('nothing to do'); process.exit(0); }
+if (DRY) { console.log('--dry, nothing called'); process.exit(0); }
 
 const Scored = z.object({
   results: z.array(z.object({
@@ -100,7 +120,8 @@ const read = f => fs.existsSync(f)
 // when you pick a posting in the UI, so a score can never put an application in
 // front of you that you did not choose.
 fs.appendFileSync(P.fitness, out.map(r => JSON.stringify(r)).join('\n') + (out.length ? '\n' : ''));
-if (!KEEP) fs.writeFileSync(P.fresh, '');
+// fresh.jsonl is a worklist, not a queue to drain. Truncating it here meant that
+// running fitness before coverage left coverage nothing to do, silently.
 
 out.sort((a, b) => b.fitness - a.fitness);
 const queued  = new Set(read(P.queue).map(r => r.id));

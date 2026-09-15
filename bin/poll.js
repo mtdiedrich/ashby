@@ -57,18 +57,24 @@ for (const l of constraintLines()) console.log(`  ${l}`);
 console.log();
 
 const store = corpus();
-const judged = new Set([...read(P.fitness).map(r => r.id), ...read(P.coverage).map(r => r.id)]);
-const staged = new Set(read(P.fresh).map(r => r.id));
+
+// Finished means scored on every front. A posting fitness has seen but coverage has
+// not is still work, and must stay on the worklist — otherwise running the scorers in
+// the wrong order silently strands it.
+const withFitness  = new Set(read(P.fitness).map(r => r.id));
+const withCoverage = new Set(read(P.coverage).map(r => r.id));
+const done = new Set([...withFitness].filter(id => withCoverage.has(id)));
 const dismissed = new Set(read(P.dismissed).map(r => r.id));
 
 const picked = candidates(store, {
-  judged, staged, dismissed,
+  done, dismissed,
   us: !ANYWHERE, all: ALL, minPay, maxAgeDays: MAX_AGE_DAYS,
 }).slice(0, LIMIT);
 
-console.log(`${store.size} postings in the corpus · ${judged.size} judged · ${staged.size} already staged` +
+console.log(`${store.size} in the corpus · ${withFitness.size} with fitness · ` +
+            `${withCoverage.size} with coverage · ${done.size} finished` +
             (dismissed.size ? ` · ${dismissed.size} dismissed` : ''));
-console.log(`${picked.length} new candidate${picked.length === 1 ? '' : 's'}\n`);
+console.log(`${picked.length} posting${picked.length === 1 ? '' : 's'} still to score\n`);
 
 for (const j of picked.slice(0, 40)) {
   console.log(`  ${j.title}  —  ${j.slug}  —  ${j.location}` +
@@ -78,9 +84,9 @@ if (picked.length > 40) console.log(`  … and ${picked.length - 40} more`);
 
 if (DRY) { console.log('\n--dry, nothing staged'); process.exit(0); }
 
-if (picked.length) {
-  fs.appendFileSync(P.fresh, picked.map(j => JSON.stringify(j)).join('\n') + '\n');
-  console.log(`\nstaged in fresh.jsonl · next: npm run fitness`);
-} else {
-  console.log('\nnothing new to stage');
-}
+// Rewritten, not appended: selection is deterministic, so the worklist is simply
+// "what still needs scoring" and re-running poll cannot duplicate anything.
+fs.writeFileSync(P.fresh, picked.map(j => JSON.stringify(j)).join('\n') + (picked.length ? '\n' : ''));
+console.log(picked.length
+  ? `\nfresh.jsonl holds ${picked.length} · next: npm run score`
+  : '\nnothing to score');

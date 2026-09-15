@@ -41,14 +41,15 @@ test('drops postings abroad when us is set', () => {
   assert.deepEqual(ids(candidates(c, { us: true })), ['sf']);
 });
 
-test('skips anything already judged', () => {
+test('skips anything already scored on every front', () => {
   const c = asMap(corpusRecord({ id: 'a' }), corpusRecord({ id: 'b' }));
-  assert.deepEqual(ids(candidates(c, { judged: new Set(['a']) })), ['b']);
+  assert.deepEqual(ids(candidates(c, { done: new Set(['a']) })), ['b']);
 });
 
-test('skips anything already staged, so re-running does not duplicate work', () => {
+test('being staged does not exclude a posting — only being finished does', () => {
+  // fresh.jsonl is a worklist the scorers re-read, not a queue the first one drains.
   const c = asMap(corpusRecord({ id: 'a' }), corpusRecord({ id: 'b' }));
-  assert.deepEqual(ids(candidates(c, { staged: new Set(['b']) })), ['a']);
+  assert.deepEqual(ids(candidates(c, {})), ['a', 'b']);
 });
 
 test('skips anything dismissed', () => {

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "poll": "node bin/poll.js",
+    "score": "node bin/fitness.js && node bin/coverage.js && node bin/embed.js",
     "fitness": "node bin/fitness.js",
     "coverage": "node bin/coverage.js",
     "similarity": "node bin/embed.js",

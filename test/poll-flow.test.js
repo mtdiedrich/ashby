@@ -25,24 +25,29 @@ test('the corpus is read newest-record-per-id', async () => {
   assert.equal(c.get('a').description, 'new', 'newest wins');
 });
 
-test('a judged posting is not proposed again', async () => {
+test('a posting needs BOTH scores before it stops being proposed', async () => {
   home = tempHome({
     'data/corpus.jsonl': jsonl([corpusRecord({ id: 'a' }), corpusRecord({ id: 'b' })]),
-    'data/fitness.jsonl': jsonl([{ id: 'a', fitness: 0.5, scoredAt: '2026-09-01T00:00:00.000Z' }]),
+    'data/fitness.jsonl': jsonl([
+      { id: 'a', fitness: 0.5, scoredAt: '2026-09-01T00:00:00.000Z' },
+      { id: 'b', fitness: 0.4, scoredAt: '2026-09-01T00:00:00.000Z' },
+    ]),
+    'data/coverage.jsonl': jsonl([{ id: 'a', coverage: 0.3, at: '2026-09-01T00:00:00.000Z' }]),
   });
   const { corpus, candidates } = await load();
-  const judged = new Set(JSON.parse('[]').concat(
-    fs.readFileSync(home + '/data/fitness.jsonl', 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l).id)));
-  assert.deepEqual(candidates(corpus(), { judged }).map(r => r.id), ['b']);
+  const idsIn = f => new Set(fs.readFileSync(home + '/data/' + f, 'utf8')
+    .split('\n').filter(Boolean).map(l => JSON.parse(l).id));
+  const fit = idsIn('fitness.jsonl'), cov = idsIn('coverage.jsonl');
+  const done = new Set([...fit].filter(id => cov.has(id)));
+  // b has fitness but no coverage, so it is still work.
+  assert.deepEqual(candidates(corpus(), { done }).map(r => r.id), ['b']);
 });
 
-test('staging twice does not duplicate a posting', async () => {
+test('selection is stable, so the worklist can be rewritten rather than appended', async () => {
   home = tempHome({ 'data/corpus.jsonl': jsonl([corpusRecord({ id: 'a' })]) });
   const { corpus, candidates } = await load();
-  const first = candidates(corpus(), {});
-  assert.equal(first.length, 1);
-  const staged = new Set(first.map(r => r.id));
-  assert.deepEqual(candidates(corpus(), { staged }), [], 'second pass stages nothing');
+  assert.deepEqual(candidates(corpus(), {}).map(r => r.id), ['a']);
+  assert.deepEqual(candidates(corpus(), {}).map(r => r.id), ['a'], 'same answer every time');
 });
 
 test('dismissal survives and keeps a posting out permanently', async () => {

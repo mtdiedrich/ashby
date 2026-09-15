@@ -107,21 +107,16 @@ Fetch every posting from every board, then stage anything nothing has judged,
 staged, or dismissed. This is the only command that hits the network.
 
 ```powershell
-npm run fitness
+npm run score
 ```
-Judge them — should you apply. One model call per posting.
+Score every staged posting on all three fronts — **fitness** (should you apply),
+**coverage** (what fraction of the requirements you can demonstrate), **similarity**
+(how close it reads to your resume).
 
-```powershell
-npm run coverage
-```
-Break each posting into its requirements and score the resume against them one at a
-time, for a coverage number and a gap list. Optional; two Haiku calls per posting.
-
-```powershell
-npm run similarity
-```
-Embed whatever changed since last time, so every posting has a similarity score.
-Cheap — cents a month after the first run. Run `poll` first; this does not fetch.
+Each scorer skips what it has already done, so the order does not matter, re-running
+costs nothing, and a posting stays on the worklist until all three have seen it. You
+can still run them one at a time — `npm run fitness`, `npm run coverage`,
+`npm run similarity` — if you only want one.
 
 ```powershell
 npm run ui
@@ -333,6 +328,7 @@ it's sent as a document on every call, so there's nothing to regenerate.
 |---|---|
 | `npm run harvest` | Validate candidate slugs from `raw.txt`, merge into `slugs.txt`, 404s to `dead.txt`. Takes filenames as arguments; `--no-recheck` skips re-validating known slugs. |
 | `npm run poll` | **The only command that talks to the job boards.** Fetches every posting into `corpus.jsonl`, then stages candidates into `fresh.jsonl`: anything matching your filters that nothing has judged, staged, or dismissed. `--no-crawl` skips the fetch, `--dry` shows without staging, `--all` ignores the title filter, `--anywhere` the location filter, `--limit N` caps it. |
+| `npm run score` | Run all three scorers over the worklist: fitness, then coverage, then similarity. Each skips what it has already done, so order does not matter and re-running is free. |
 | `npm run fitness` | Judge `fresh.jsonl` against your resume and `context.md` — a holistic 0-1 **fitness**, with reasoning. Appends to `fitness.jsonl` and truncates `fresh.jsonl`; `--keep` leaves it, for re-runs. |
 | `npm run coverage` | Extract each posting's requirements and score the resume against them one by one, for a **coverage** number and a gap list. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`. |
 | `npm run gaps` | Aggregate coverage across postings — what you keep missing. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
@@ -437,7 +433,7 @@ nothing about seniority, pay, or your hard constraints. Its value is recall.
 | File | What it is |
 |---|---|
 | `slugs.txt` | Validated Ashby board slugs. Grows; never shrinks. |
-| `fresh.jsonl` | Work queue: polled, not yet scored. Truncated by `fitness.js`. |
+| `fresh.jsonl` | The worklist: staged and not yet scored on all three fronts. Rewritten by `poll`, read by every scorer, consumed by none. |
 | `fitness.jsonl` | **The log.** One line per judgement, append-only, re-scores included. Never pruned. |
 | `queue.jsonl` | What you picked in the UI. The only input to `apply.js`. |
 | `log.jsonl` | One line per apply attempt: what the rules filled, what the model planned, what failed. |
