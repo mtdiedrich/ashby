@@ -48,6 +48,8 @@
   td { padding: 7px 10px; vertical-align: top; }
   td.num { font-variant-numeric: tabular-nums; font-weight: 600; width: 58px; }
   td.num.none { color: var(--muted); font-weight: 400; }
+  td.total { width: 74px; }
+  td.total .sub { font-variant-numeric: tabular-nums; letter-spacing: .04em; }
   .s-hi { color: var(--good); } .s-mid { color: var(--warn); } .s-lo { color: var(--muted); }
   td.title { font-weight: 600; max-width: 360px; }
   td.co, td.loc, td.pay, td.date { color: var(--muted); white-space: nowrap; }
@@ -123,12 +125,13 @@
       <th data-s="fitness" class="sorted">fitness <span class="caret">▾</span></th>
       <th data-s="coverage">coverage <span class="caret">▾</span></th>
       <th data-s="similarity">similarity <span class="caret">▾</span></th>
+      <th data-s="daysLive">days live <span class="caret">▾</span></th>
+      <th data-s="total" title="Each of the four columns min-maxed across the rows shown, then summed. Days live is inverted, so fresher scores higher. Blank until all four exist.">total <span class="caret">▾</span></th>
       <th data-s="state">state <span class="caret">▾</span></th>
       <th data-s="title">title <span class="caret">▾</span></th>
       <th data-s="slug">company <span class="caret">▾</span></th>
       <th data-s="location">location <span class="caret">▾</span></th>
       <th data-s="payNum">pay <span class="caret">▾</span></th>
-      <th data-s="daysLive">days live <span class="caret">▾</span></th>
     </tr>
   </thead>
   <tbody id="rows"></tbody>
@@ -160,7 +163,7 @@ async function load() {
   try { d = await (await fetch('/api/board?' + q)).json(); }
   catch {
     document.getElementById('rows').innerHTML =
-      '<tr><td colspan="9" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
+      '<tr><td colspan="10" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
     return;
   }
 
@@ -168,7 +171,7 @@ async function load() {
   TOTAL = d.total;
   document.getElementById('stamp').textContent =
     d.total + ' postings · ' + d.counts.fitness + ' fitness · ' + d.counts.coverage +
-    ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.queued + ' queued';
+    ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.total + ' scored on all four · ' + d.counts.queued + ' queued';
   const more = document.getElementById('more');
   more.hidden = JOBS.length >= TOTAL;
   more.textContent = 'show more (' + JOBS.length + ' of ' + TOTAL + ')';
@@ -193,7 +196,7 @@ function visible() {
 function render() {
   const rows = visible();
   const body = document.getElementById('rows');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="9" class="empty">nothing here</td></tr>'; return; }
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="10" class="empty">nothing here</td></tr>'; return; }
 
   body.innerHTML = rows.map(j => {
     const cov = j.coverage == null ? '—'
@@ -231,15 +234,19 @@ function render() {
         '<td class="num ' + cls(j.coverage) + '">' + cov + '</td>' +
         '<td class="num ' + (j.similarity == null ? 'none' : '') + '">' +
           (j.similarity == null ? '—' : j.similarity.toFixed(3)) + '</td>' +
+        '<td class="date' + (j.daysLive > 90 ? ' stale' : '') + '">' +
+          (j.daysLive == null ? '—' : j.daysLive) + '</td>' +
+        '<td class="num total ' + (j.total == null ? 'none' : cls(j.total / 4)) + '">' +
+          (j.total == null ? '—' : j.total.toFixed(2)) +
+          (j.total == null ? '' : '<span class="sub">' + [j.nFitness, j.nCoverage, j.nSimilarity, j.nFresh]
+             .map(v => v.toFixed(1)).join(' ') + '</span>') + '</td>' +
         '<td class="st"><span class="state st-' + j.state + '">' + j.state + '</span></td>' +
         '<td class="title">' + esc(j.title) + '</td>' +
         '<td class="co">' + esc(j.slug) + '</td>' +
         '<td class="loc">' + esc(j.location || '?') + '</td>' +
         '<td class="pay' + (j.pay ? ' has' : '') + '">' + esc(j.pay || '—') + '</td>' +
-        '<td class="date' + (j.daysLive > 90 ? ' stale' : '') + '">' +
-          (j.daysLive == null ? '—' : j.daysLive) + '</td>' +
       '</tr>' +
-      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="9">' +
+      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="10">' +
         '<div class="panes">' +
           '<div class="pane">' +
             '<h4>Fitness — should I apply</h4>' + fitPane +
@@ -297,7 +304,7 @@ for (const th of document.querySelectorAll('thead th[data-s]')) {
   th.addEventListener('click', () => {
     const k = th.dataset.s;
     if (sortKey === k) sortDir = -sortDir;
-    else { sortKey = k; sortDir = ['fitness', 'coverage', 'similarity', 'payNum', 'daysLive'].includes(k) ? -1 : 1; }
+    else { sortKey = k; sortDir = ['fitness', 'coverage', 'similarity', 'payNum', 'daysLive', 'total'].includes(k) ? -1 : 1; }
     for (const o of document.querySelectorAll('thead th')) o.classList.remove('sorted');
     th.classList.add('sorted');
     th.querySelector('.caret').textContent = sortDir === -1 ? '▾' : '▴';

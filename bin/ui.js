@@ -31,6 +31,7 @@ import { tidy } from '../lib/text.js';
 import { corpus, asPosting } from '../lib/corpus.js';
 import { wantedTitle, usLocation } from '../lib/filters.js';
 import { topUnscored } from '../lib/select.js';
+import { composite } from '../lib/composite.js';
 import { salaryOf } from '../lib/comp.js';
 import * as vec from '../lib/vec.js';
 
@@ -137,20 +138,25 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
     });
   }
 
+  // Normalise across the filtered set, not the whole corpus: the total ranks within
+  // what you are actually looking at, and re-scales when you change the filters.
+  const scored = composite(rows);
+
   // Default order: judged postings first by fitness, then by similarity, then the rest.
-  rows.sort((a, b) =>
+  scored.sort((a, b) =>
     (b.fitness ?? -1) - (a.fitness ?? -1) ||
     (b.similarity ?? -9) - (a.similarity ?? -9));
 
   return {
-    jobs: rows.slice(0, limit),
-    total: rows.length,
+    jobs: scored.slice(0, limit),
+    total: scored.length,
     counts: {
-      fitness: rows.filter(r => r.fitness != null).length,
-      coverage: rows.filter(r => r.coverage != null).length,
-      similarity: rows.filter(r => r.similarity != null).length,
-      queued: rows.filter(r => r.state === 'queued').length,
-      applied: rows.filter(r => r.state === 'applied').length,
+      fitness: scored.filter(r => r.fitness != null).length,
+      coverage: scored.filter(r => r.coverage != null).length,
+      similarity: scored.filter(r => r.similarity != null).length,
+      total: scored.filter(r => r.total != null).length,
+      queued: scored.filter(r => r.state === 'queued').length,
+      applied: scored.filter(r => r.state === 'applied').length,
     },
     generatedAt: new Date().toISOString(),
   };

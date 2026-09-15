@@ -125,6 +125,16 @@ Queueing is the only thing that writes `queue.jsonl`, and `apply` reads nothing 
 **Not interested** writes `dismissed.jsonl` and keeps `poll` from proposing it again —
 reversible, and the only "no" the system records.
 
+**total** is the four numeric columns min-maxed across the rows currently shown and
+summed, 0–4, with the four normalised parts underneath. Days live is inverted, so
+fresher scores higher. It is blank until all four exist — an unscored posting is
+unknown, not bad. Normalisation is relative to what is on screen, so changing the
+filters re-scales it.
+
+Min-max is outlier-sensitive, and days live is the column where that bites: one
+965-day-old posting compresses everything else into the top of the range, so freshness
+contributes less than the other three.
+
 Scores drift between runs on identical input. The score column shows the spread when a
 posting has been judged more than once; anything straddling your threshold is being
 sorted by variance, not by fit.
