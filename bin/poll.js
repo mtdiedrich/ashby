@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { P, ensureDirs } from '../lib/paths.js';
 import { corpus } from '../lib/corpus.js';
-import { candidates } from '../lib/select.js';
+import { candidates, finished, vectorIds } from '../lib/select.js';
 import { minimumBase, constraintLines } from '../lib/constraints.js';
 
 const argv    = process.argv.slice(2);
@@ -61,12 +61,16 @@ console.log();
 
 const store = corpus();
 
-// Finished means scored on every front. A posting fitness has seen but coverage has
-// not is still work, and must stay on the worklist — otherwise running the scorers in
-// the wrong order silently strands it.
+// Finished means scored on every front — all THREE. A posting one scorer has seen
+// and another has not is still work, and must stay on the worklist; every scorer
+// reads only fresh.jsonl, so dropping it here makes the gap permanent.
+//
+// Similarity was missing from this check, which is how 15 postings ended up with
+// fitness and coverage, no vector, and therefore no rank at all.
 const withFitness  = new Set(read(P.fitness).map(r => r.id));
 const withCoverage = new Set(read(P.coverage).map(r => r.id));
-const done = new Set([...withFitness].filter(id => withCoverage.has(id)));
+const withVector   = vectorIds(read(P.vectors));
+const done = finished({ fitness: withFitness, coverage: withCoverage, vectors: withVector });
 const dismissed = new Set(read(P.dismissed).map(r => r.id));
 
 const picked = candidates(store, {
@@ -74,8 +78,16 @@ const picked = candidates(store, {
   us: !ANYWHERE, all: ALL, minPay, maxAgeDays: MAX_AGE_DAYS,
 }).slice(0, LIMIT);
 
+// All three fronts are reported, counted over the same population — the postings
+// that have been scored at all. vectors.jsonl also holds vectors for postings no
+// scorer has touched, and reporting that total here would compare three numbers
+// against a fourth thing. Printing only two fronts is what let a missing vector
+// strand a posting unnoticed.
+const anyScore = new Set([...withFitness, ...withCoverage]);
+const embeddedOfThose = [...anyScore].filter(id => withVector.has(id)).length;
 console.log(`${store.size} in the corpus · ${withFitness.size} with fitness · ` +
-            `${withCoverage.size} with coverage · ${done.size} finished` +
+            `${withCoverage.size} with coverage · ${embeddedOfThose} embedded · ` +
+            `${done.size} finished` +
             (dismissed.size ? ` · ${dismissed.size} dismissed` : ''));
 console.log(`${picked.length} posting${picked.length === 1 ? '' : 's'} still to score\n`);
 

@@ -117,6 +117,22 @@ earlier explanation was wrong.
 tokens. Say what a run will cost before starting a large one, and prefer `--dry`,
 `--keep`, and `--no-model` when testing.
 
+## The worklist is the only way in
+
+`fresh.jsonl` is what every scorer reads. `poll` rewrites it with whatever is not
+yet `finished`, so **a posting counted as finished while a score is still missing can
+never acquire that score** — it is gone from the only list anything consults.
+
+`finished()` in `lib/select.js` therefore requires all THREE fronts: fitness,
+coverage AND a vector. It originally checked two, which stranded 15 postings with
+fitness and coverage, no vector, and so no `score` and no `value` — visible on the
+board and permanently unrankable.
+
+If you add a fourth scorer, it goes in `finished()` in the same commit, and `poll`
+reports its count alongside the others. Counting the three fronts over different
+populations hides exactly this bug, which is why the embedded figure there is scoped
+to postings that have been scored rather than the whole vector store.
+
 ## Concurrency
 
 Scoring passes run through `pool()` in `lib/pool.js`, not a bare `for await` loop.
