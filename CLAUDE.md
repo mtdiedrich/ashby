@@ -6,7 +6,9 @@
 user's resume and constraints · `web/` ui.html. Nothing lives in the root but docs
 and package.json.
 
-**Never name a data file by bare string.** Every path goes through `lib/paths.js`, so
+**Never name a data file by bare string.** `npm test` enforces this — see
+`test/paths.test.js`. It was missed once for `context.md` because the audit regex
+only looked for `.jsonl/.json/.txt`, and every scoring run then died on it. Every path goes through `lib/paths.js`, so
 scripts work from any working directory and a file can be moved in one place. Add new
 files to `P` there rather than hardcoding them.
 
