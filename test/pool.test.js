@@ -112,3 +112,48 @@ test('nonsense concurrency falls back rather than hanging or stampeding', () => 
     if (prev === undefined) delete process.env.ASHBY_JOBS; else process.env.ASHBY_JOBS = prev;
   }
 });
+
+// ---- aborting a doomed run -----------------------------------------------
+
+import { isAuthError } from '../lib/keys.js';
+
+test('stopOn halts the run instead of repeating a doomed call', async () => {
+  let calls = 0;
+  const out = await pool([...Array(50).keys()], async (i) => {
+    calls++;
+    if (i >= 2) { const e = new Error('401 invalid x-api-key'); e.status = 401; throw e; }
+    return i;
+  }, { limit: 4, stopOn: isAuthError });
+
+  assert.ok(calls < 50, `should have stopped early, made ${calls} of 50 calls`);
+  assert.deepEqual(out.slice(0, 2).map(r => r.value), [0, 1], 'work already done is kept');
+  assert.ok(out.some(r => !r.ok), 'the failure is recorded');
+});
+
+test('stopOn reports why it stopped', async () => {
+  const out = await pool([0, 1, 2], async () => {
+    const e = new Error('401 invalid x-api-key'); e.status = 401; throw e;
+  }, { limit: 1, stopOn: isAuthError });
+  assert.equal(out.stopped?.message, '401 invalid x-api-key');
+});
+
+test('an ordinary failure does not stop anything', async () => {
+  let calls = 0;
+  const out = await pool([...Array(10).keys()], async (i) => {
+    calls++;
+    if (i === 3) throw new Error('structured output failed to parse');
+    return i;
+  }, { limit: 2, stopOn: isAuthError });
+  assert.equal(calls, 10, 'every item should still be attempted');
+  assert.equal(out.filter(r => r.ok).length, 9);
+  assert.equal(out.stopped, undefined);
+});
+
+test('without stopOn the behaviour is exactly as before', async () => {
+  let calls = 0;
+  await pool([...Array(8).keys()], async () => {
+    calls++;
+    const e = new Error('401'); e.status = 401; throw e;
+  }, { limit: 2 });
+  assert.equal(calls, 8);
+});

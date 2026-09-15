@@ -116,6 +116,23 @@ earlier explanation was wrong.
   Selection code must never read the ask — `test/pay-ask.test.js` enforces this by
   scanning `lib/select.js`, `lib/comp.js`, `lib/filters.js` and `bin/poll.js`.
 
+## Failures that are the same for every item
+
+A bad API key is the same answer for all of them. One run made 1,396 requests,
+printed 1,396 identical 401s, filled its progress bar to 100%, reported "1396 in 25s"
+and then "0 scored" — the only honest line was the zero.
+
+- Keys are preflighted **once**, before any work: `preflight()` in `lib/ai.js`,
+  `requireKey()` in `lib/keys.js`. A placeholder is caught before a single request.
+- `pool()` takes `stopOn`; the scorers pass `isAuthError` so the run aborts on the
+  first 401 instead of repeating it.
+- Anything thrown by a preflight carries `status = 401` so `isAuthError` sees it.
+  Without that the pool treated it as an ordinary per-item failure and printed it
+  once per posting.
+
+`isAuthError` is deliberately narrow on strings: "401" appears in job titles, and a
+"401k Administrator" posting must not look like an authentication failure.
+
 ## Money
 
 `score.js` and `apply.js` cost Anthropic tokens per posting; `embed.js` costs OpenAI

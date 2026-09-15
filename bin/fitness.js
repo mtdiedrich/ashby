@@ -14,11 +14,12 @@
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
 import { z } from 'zod';
-import { ask, context, MODEL } from '../lib/ai.js';
+import { ask, context, MODEL, preflight } from '../lib/ai.js';
 import { resumeBlock } from '../lib/resume.js';
 import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
 import { completeBatch } from '../lib/batch.js';
+import { isAuthError } from '../lib/keys.js';
 
 const BATCH = 8;
 const FORCE = process.argv.includes('--force');
@@ -42,6 +43,10 @@ const jobs = FORCE ? staged : staged.filter(j => !already.has(j.id));
 console.log(`${staged.length} staged · ${staged.length - jobs.length} already judged · ${jobs.length} to judge`);
 if (!jobs.length) { console.log('nothing to do'); process.exit(0); }
 if (DRY) { console.log('--dry, nothing called'); process.exit(0); }
+
+// Once, before any work — see coverage.js.
+try { preflight(); } catch (e) { console.error(`
+${e.message}`); process.exit(1); }
 
 const Scored = z.object({
   results: z.array(z.object({
@@ -139,7 +144,16 @@ const outcomes = await pool(groups, async (i) => {
   // the rest read it. Opening at full width makes the whole first wave miss, and
   // each one pays the write premium instead of one paying it.
   warmup: true,
+  // One bad key is the same answer for every posting; stop rather than repeat it.
+  stopOn: isAuthError,
 });
+
+if (outcomes.stopped) {
+  bar.finish();
+  console.error(`
+  stopped: ${outcomes.stopped.message}`);
+  console.error('  nothing further was attempted. Fix the key and re-run.');
+}
 
 // Collected here rather than pushed from inside the worker, so the order of
 // fitness.jsonl does not depend on which request happened to return first.

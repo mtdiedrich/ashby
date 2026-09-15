@@ -29,11 +29,12 @@
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
 import { z } from 'zod';
-import { ask, context } from '../lib/ai.js';
+import { ask, context, preflight } from '../lib/ai.js';
 import { hash } from '../lib/corpus.js';
 import { resumeText } from '../lib/resume-text.js';
 import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
+import { isAuthError } from '../lib/keys.js';
 
 const argv    = process.argv.slice(2);
 const DRY     = argv.includes('--dry');
@@ -162,6 +163,10 @@ console.log(`  fitness to score:        ${needScore.length}  (${work.length - ne
 console.log(`  extractor: ${EXTRACTOR} · scorer: ${SCORER}`);
 
 if (DRY) { console.log('\n--dry, nothing called'); process.exit(0); }
+
+// Once, before any work. A bad key is the same answer for all 1,396 postings, and
+// discovering that per posting produced 1,396 identical lines and a full progress bar.
+try { preflight(); } catch (e) { console.error(`\n${e.message}`); process.exit(1); }
 if (!needExtract.length && !needScore.length) { console.log('\nnothing to do'); process.exit(0); }
 
 // ---- pass 1: requirements ----------------------------------------------
@@ -179,11 +184,19 @@ const extracted = await pool(needExtract, async (w) => {
   // on a single-threaded runtime, so two lines cannot interleave.
   fs.appendFileSync(P.requirements, JSON.stringify(row) + '\n');
   reqCache.set(w.jdHash, row);
-}, { limit: JOBS, warmup: true, onDone: () => exBar?.tick() });
-for (const [k, r] of extracted.entries()) {
-  if (!r.ok) console.warn(`\n  ! ${needExtract[k].j.title}: ${r.error.message}`);
-}
+}, { limit: JOBS, warmup: true, onDone: () => exBar?.tick(), stopOn: isAuthError });
 exBar?.finish();
+
+// Every call carries the same key. Printing 1,396 identical 401s and then "0 scored"
+// is not a report — it is noise with the answer buried at the end of it.
+if (extracted.stopped) {
+  console.error(`\nstopped: ${extracted.stopped.message}`);
+  console.error('nothing further was attempted. Fix the key and re-run.');
+  process.exit(1);
+}
+for (const [k, r] of extracted.entries()) {
+  if (!r.ok) console.warn(`  ! ${needExtract[k].j.title}: ${r.error.message}`);
+}
 
 // ---- pass 2: score each requirement ------------------------------------
 
@@ -251,11 +264,18 @@ const scored = await pool(needScore, async (w) => {
   // pay the write premium.
   warmup: true,
   onDone: () => scBar?.tick(),
+  stopOn: isAuthError,
 });
-for (const [k, r] of scored.entries()) {
-  if (!r.ok) console.warn(`\n  ! ${needScore[k].j.title}: ${r.error.message}`);
-}
 scBar?.finish();
+
+if (scored.stopped) {
+  console.error(`\nstopped: ${scored.stopped.message}`);
+  console.error('nothing further was attempted. Fix the key and re-run.');
+  process.exit(1);
+}
+for (const [k, r] of scored.entries()) {
+  if (!r.ok) console.warn(`  ! ${needScore[k].j.title}: ${r.error.message}`);
+}
 
 // ---- report ------------------------------------------------------------
 
