@@ -177,7 +177,7 @@ sorted by variance, not by fit.
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run apply` | Fill the queued forms. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`. |
 | `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
-| `npm run harvest` | Find and validate new company boards. `--discover` searches both sources, `--hn` Hacker News only, `--github` GitHub code search only; with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
+| `npm run harvest` | Find and validate new company boards. `--discover` searches all three sources; `--wayback`, `--hn`, `--github` each pick one; with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
 | `npm run test-fill` | Run the form filler headless against any apply URL. No model, no submit. |
 | `npm run check-docs` | Fail if this README has drifted from the code. |
 | `npm test` | The suite. |
@@ -252,16 +252,27 @@ how many slugs you know.
 npm run harvest -- --discover
 ```
 
-Two automatable sources, neither needing a browser. **Hacker News** — the monthly "Who
-is hiring" threads are thick with Ashby apply links and Algolia indexes every comment
-behind a public API. **GitHub code search** — some 32,000 indexed files mention
-`jobs.ashbyhq.com`, and the API returns the matching text fragment, so slugs come
-straight out of the search results without fetching a single file. GitHub allows 10
-code-search requests a minute, so that half takes ten minutes of mostly waiting.
+Three automatable sources, none needing a browser or a key.
 
-Together they took this project from 87 boards to 1,408. Slugs are validated before
-they are kept — a link from an old comment is often a company that has since moved ATS
-or folded, and 349 of the candidates were dead.
+**Wayback Machine** (`--wayback`) is the one that matters. The CDX index answers
+"every URL ever crawled under this host", which is the question we actually have —
+the other two can only find a board somebody chose to link to. One request returns
+about 200,000 archived URLs and some 6,400 distinct slugs, and 94% of everything the
+other two found is already in it. It takes about a minute.
+
+**Hacker News** (`--hn`) — the monthly "Who is hiring" threads are thick with Ashby
+apply links, and Algolia indexes every comment behind a public API. Seconds.
+
+**GitHub code search** (`--github`) — some 32,000 indexed files mention
+`jobs.ashbyhq.com`, and the API returns the matching text fragment, so slugs come
+straight out of the results without fetching a file. GitHub allows 10 code-search
+requests a minute, so this one takes ten minutes of mostly waiting.
+
+Slugs are always validated before they are kept. The archive is historical, so about
+half of what it turns up is a company that has since moved ATS or folded — that is
+expected, and the dead ones go to `dead.txt` so they are not re-checked from scratch
+next time. Validation is the slow part of a big run: a few thousand candidates at
+twelve concurrent requests takes several minutes.
 
 Re-run it occasionally. It is cheap, and each new board arrives with its whole back
 catalogue, so expect a burst of old postings the first time one appears.

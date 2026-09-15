@@ -1,9 +1,10 @@
 // Stage 0 — validate candidate slugs and merge them into slugs.txt.
 //
 //   npm run harvest                 validate raw.txt + re-check slugs.txt
-//   npm run harvest -- --discover   pull candidates off Hacker News and GitHub
+//   npm run harvest -- --discover   pull candidates off all three sources
 //   npm run harvest -- --hn         Hacker News only
 //   npm run harvest -- --github     GitHub code search only
+//   npm run harvest -- --wayback    Wayback Machine URL index only (highest yield)
 //   npm run harvest -- --no-recheck skip re-validating slugs already in slugs.txt
 //   npm run harvest -- <file>       validate a specific file (repeatable)
 //
@@ -14,7 +15,7 @@
 // valid slug and is kept (they post again later).
 
 import fs from 'node:fs';
-import { fromHackerNews, fromGitHub } from '../lib/discover.js';
+import { fromHackerNews, fromGitHub, fromWayback } from '../lib/discover.js';
 import { P } from '../lib/paths.js';
 
 const CONCURRENCY = 12;
@@ -22,6 +23,7 @@ const args     = process.argv.slice(2);
 const recheck  = !args.includes('--no-recheck');
 const useHn    = args.includes('--hn');
 const useGh    = args.includes('--github');
+const useWb    = args.includes('--wayback');
 const useAll   = args.includes('--discover');
 const files    = args.filter(a => !a.startsWith('--'));
 const sources  = files.length ? files : [P.raw];
@@ -61,6 +63,16 @@ if (useGh || useAll) {
   process.stderr.write('\n');
   for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
   console.log(`  ${found.size} slugs found on GitHub`);
+}
+
+if (useWb || useAll) {
+  // The only source that finds a board nobody linked to. It returns roughly four
+  // times what HN and GitHub manage between them, and contains almost all of theirs.
+  console.log('asking the Wayback Machine for every archived Ashby board...');
+  const found = await fromWayback(msg => process.stderr.write(msg + '   \r'));
+  process.stderr.write('\n');
+  for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
+  console.log(`  ${found.size} slugs in the archive`);
 }
 
 const toCheck = recheck ? new Set([...existing, ...incoming])
