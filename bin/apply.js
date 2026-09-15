@@ -118,6 +118,16 @@ for (const [i, job] of queue.entries()) {
   if (!url) { console.warn(`skipping ${job.title}: no apply URL`); continue; }
 
   console.log(`\n${'─'.repeat(70)}\n[${i + 1}/${queue.length}] ${job.title} — ${job.slug}\n${url}`);
+
+  // lib/fill.browser.js reads Ashby's form DOM specifically — [data-field-path] and
+  // the ashby-application-form-* classes. A Greenhouse form has none of them, so
+  // every rule would miss and the model would be handed an empty field list. Say so
+  // and open nothing, rather than produce a page of red and call it a result.
+  if ((job.ats ?? 'ashby') !== 'ashby') {
+    console.log(`  ${job.ats} form — apply.js only fills Ashby's. Open it yourself.`);
+    continue;
+  }
+
   const page = await ctx.newPage();
   const record = { job: job.id, title: job.title, slug: job.slug, url, at: new Date().toISOString(), model: NO_MODEL ? null : MODEL };
 

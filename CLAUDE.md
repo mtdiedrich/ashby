@@ -138,6 +138,25 @@ reports its count alongside the others. Counting the three fronts over different
 populations hides exactly this bug, which is why the embedded figure there is scoped
 to postings that have been scored rather than the whole vector store.
 
+## Two ATSes, one corpus
+
+Everything board-specific lives in `lib/ats.js` — endpoint, response shape,
+normalisation. Nothing else should branch on which ATS a posting came from, with two
+exceptions that are deliberate: `apply.js` refuses non-Ashby postings because
+`fill.browser.js` reads Ashby's DOM specifically, and the board shows which is which.
+
+A record with no `ats` field is Ashby. Every one of the 62,000 rows written before
+this predates the field, and Ashby ids stay unprefixed for the same reason —
+prefixing would orphan them along with every fitness, coverage and vector record
+keyed to them. Greenhouse ids carry a `greenhouse:` prefix because theirs are small
+integers.
+
+**The corpus does not store every description.** It holds metadata for everything and
+descriptions only for titles `wantedTitle` passes; anything else is marked
+`descriptionStored: false` and fetched on demand when staged. An empty description is
+never the same as a missing one, and scoring a blank produces a confident number about
+nothing. Measured: 96.5% of a 380 MB corpus was descriptions that would never be read.
+
 ## Concurrency
 
 Scoring passes run through `pool()` in `lib/pool.js`, not a bare `for await` loop.

@@ -32,6 +32,7 @@ import { corpus, asPosting } from '../lib/corpus.js';
 import { wantedTitle, usLocation } from '../lib/filters.js';
 import { topUnscored } from '../lib/select.js';
 import { appliedIds, openedIds } from '../lib/applog.js';
+import { adapterFor, postingUrl } from '../lib/ats.js';
 import { composite } from '../lib/composite.js';
 import { salaryOf } from '../lib/comp.js';
 import * as vec from '../lib/vec.js';
@@ -119,6 +120,9 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
       daysLive: p.publishedAt ? Math.round((Date.now() - new Date(p.publishedAt)) / 86400000) : null,
       applyUrl: p.applyUrl ?? null,
       jobUrl: p.jobUrl ?? null,
+      ats: c.ats ?? 'ashby',
+      // apply.js only knows Ashby's form DOM; anything else you fill yourself.
+      fillable: (c.ats ?? 'ashby') === 'ashby',
       pay: p.salary?.summary ?? f?.salary?.summary ?? null,
       description: tidy(c.description ?? ''),
 
@@ -171,16 +175,44 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
 }
 
 /** Stage a posting into fresh.jsonl so fitness.js / coverage.js pick it up next run. */
-function stage(id) {
+async function stage(id) {
   const c = corpus().get(id);
-  const c2 = corpus().get(id);
-  const rec = c2 ? asPosting(c2, null, salaryOf) : null;
-  if (!rec) return { ok: false, error: 'not in the corpus' };
+  if (!c) return { ok: false, error: 'not in the corpus' };
   if (read(P.fresh).some(r => r.id === id)) return { ok: true, already: true };
 
-  const line = JSON.stringify(rec) + '\n';
+  // The crawl keeps descriptions only for titles a scorer could see. Staging anything
+  // else has to fetch one first — scoring an empty description would produce a
+  // confident number about nothing, which is worse than refusing.
+  let full = c;
+  if (c.descriptionStored === false) {
+    const fetched = await fetchDescription(c);
+    if (!fetched) return { ok: false, error: 'could not fetch the description for that posting' };
+    full = fetched;
+  }
+
+  const line = JSON.stringify(asPosting(full, null, salaryOf)) + '\n';
   fs.appendFileSync(P.fresh, line);
-  return { ok: true };
+  return { ok: true, fetched: full !== c };
+}
+
+/**
+ * Re-fetch one posting so it has a description again.
+ * Greenhouse serves a single posting; Ashby only serves whole boards, so that call
+ * comes back with everything and the one we want is picked out of it.
+ */
+async function fetchDescription(rec) {
+  const ats = adapterFor(rec);
+  try {
+    const r = await fetch(postingUrl(ats, rec.company, rec.id), { signal: AbortSignal.timeout(30_000) });
+    if (!r.ok) return null;
+    const body = await r.json();
+    const raw = ats.id === 'greenhouse'
+      ? body
+      : ats.postingsFrom(body).find(j => String(j.id) === String(rec.id));
+    if (!raw) return null;
+    const fresh = ats.normalize(raw, rec.company, new Date().toISOString());
+    return fresh.description ? fresh : null;
+  } catch { return null; }
 }
 
 /** Say no to a posting so poll stops proposing it. Replaces the old seen.json. */
@@ -195,10 +227,12 @@ function setDismissed(id, wanted) {
  * Stage the n highest-similarity postings that still need scoring. This is what
  * `match --to-fresh` used to do; the board could only ever stage one at a time.
  */
-function stageTop(n, opts) {
+async function stageTop(n, opts) {
   const picked = topUnscored(board({ ...opts, limit: 6000 }).jobs, n);
   let staged = 0;
-  for (const j of picked) { const r = stage(j.id); if (r.ok && !r.already) staged++; }
+  // Sequential on purpose: each miss is a network fetch, and this is a button a
+  // person pressed, not a batch job.
+  for (const j of picked) { const r = await stage(j.id); if (r.ok && !r.already) staged++; }
   return { ok: true, staged, requested: n };
 }
 
@@ -260,14 +294,15 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/api/stage-top') {
-    readBody().then(({ n, us, remote, all }) =>
-        send(200, 'application/json', JSON.stringify(stageTop(Math.min(Number(n) || 25, 500), { us, remote, all }))))
+    readBody().then(({ n, us, remote, all }) => stageTop(Math.min(Number(n) || 25, 500), { us, remote, all }))
+      .then(r => send(200, 'application/json', JSON.stringify(r)))
       .catch(e => send(400, 'application/json', JSON.stringify({ ok: false, error: e.message })));
     return;
   }
 
   if (req.method === 'POST' && req.url === '/api/stage') {
-    readBody().then(({ id }) => send(200, 'application/json', JSON.stringify(stage(id))))
+    readBody().then(({ id }) => stage(id))
+      .then(r => send(200, 'application/json', JSON.stringify(r)))
               .catch(e => send(400, 'application/json', JSON.stringify({ ok: false, error: e.message })));
     return;
   }

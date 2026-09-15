@@ -170,7 +170,7 @@ sorted by variance, not by fit.
 
 | Command | What it does |
 |---|---|
-| `npm run poll` | Fetch every board into `corpus.jsonl`, rewrite `fresh.jsonl` with what still needs scoring. `--dry`, `--no-crawl`, `--all` (ignore title filter), `--anywhere` (ignore location), `--limit N`, `--jobs N` (boards fetched at once, default 12). |
+| `npm run poll` | Fetch every board into `corpus.jsonl`, rewrite `fresh.jsonl` with what still needs scoring. `--dry`, `--no-crawl`, `--all` (ignore title filter), `--anywhere` (ignore location), `--limit N`, `--jobs N` (boards fetched at once, default 12), `--ats ashby|greenhouse` (fetch just one), `--full` (store every description). |
 | `npm run score` | All three scorers over the worklist. |
 | `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`, `--jobs N` (requests at once, default 6). |
 | `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`, `--jobs N` (requests at once, default 6). |
@@ -178,7 +178,7 @@ sorted by variance, not by fit.
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run apply` | Fill the queued forms, then ask whether you submitted each one. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`, `--wait-parse N` (seconds to wait for Ashby's resume parser, default 3). |
 | `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
-| `npm run harvest` | Find and validate new company boards. `--discover` searches the four crawl sources; `--wayback`, `--hn`, `--github`, `--commoncrawl` each pick one; `--yc` guesses from the YC directory (opt-in, see below); with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
+| `npm run harvest` | Find and validate new company boards. `--discover` searches the four crawl sources; `--wayback`, `--hn`, `--github`, `--commoncrawl` each pick one; `--yc` guesses from the YC directory (opt-in, see below); `--greenhouse` harvests Greenhouse boards instead of Ashby; with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
 | `npm run test-fill` | Run the form filler headless against any apply URL. No model, no submit. |
 | `npm run check-docs` | Fail if this README has drifted from the code. |
 | `npm test` | The suite. |
@@ -299,6 +299,51 @@ interrupt keeps everything you already dealt with.
 The board separates the two: **submitted** means you said yes. Opening a form and
 closing it used to count as applying, which made the board claim applications that
 were never made.
+
+### Two job boards
+
+Both Ashby and Greenhouse publish an unauthenticated API listing every open posting
+for a company, so both feed one corpus. `lib/ats.js` holds everything specific to
+each: the endpoint, the response shape, and the conversion to a corpus record.
+
+```powershell
+npm run harvest -- --greenhouse
+```
+
+That finds and validates Greenhouse boards; `npm run poll` then crawls both. It
+roughly doubled the candidate pool — 1,362 Ashby postings passing the title and
+location filters, plus 1,389 from Greenhouse.
+
+Four differences are worth knowing, all checked against live boards:
+
+| | Ashby | Greenhouse |
+|---|---|---|
+| description | plain text | **escaped HTML**, unescaped and stripped on the way in |
+| pay | structured, on ~38% | **none published** — 42 of Stripe's 639 mention it even in prose |
+| remote | `workplaceType` | inferred from the location string, `null` when it says nothing |
+| employment type | published | not published |
+
+So a Greenhouse posting almost always shows no pay. That is the board being honest
+rather than a bug: the hard pay filter passes anything unstated, and the salary ask
+falls back to your `me.json` figure with no floor to clear.
+
+**`apply` only fills Ashby forms.** `lib/fill.browser.js` reads Ashby's DOM
+specifically, and a Greenhouse form has none of it — so `apply` says so and opens
+nothing rather than producing a page of red. Greenhouse ones you fill yourself; the
+board marks which is which.
+
+### What the corpus stores
+
+The corpus reached 380 MB, of which 367 MB was descriptions for titles the filters
+will never pass to a scorer. Adding Greenhouse the same way projected a 5.5 GB heap —
+past Node's default limit, at which point it simply stops loading.
+
+So **metadata is kept for every posting and the description only for titles a scorer
+could see.** The board still lists everything. Staging a posting whose description was
+not kept fetches it first, which is one request at the moment you need it. Greenhouse
+postings cost 715 bytes each this way instead of 5,814.
+
+`npm run poll -- --full` keeps every description, if you want the old behaviour.
 
 ### Postal address
 
@@ -449,6 +494,7 @@ work from any directory.
 | `dismissed.jsonl` | What you said no to. |
 | `log.jsonl` | One line per apply attempt: what filled, what failed, what was left red. |
 | `dead.txt` · `raw.txt` · `candidates.txt` | Slug harvesting: rejected, pending, and the shipped seed list. |
+| `greenhouse-slugs.txt` · `greenhouse-dead.txt` | The same two lists for Greenhouse. Kept separate so a token that collides with an Ashby slug cannot confuse either. |
 
 ---
 

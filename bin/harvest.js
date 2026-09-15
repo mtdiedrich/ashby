@@ -9,6 +9,11 @@
 //   npm run harvest -- --yc          guess slugs from the YC company directory
 //   npm run harvest -- --no-recheck skip re-validating slugs already in slugs.txt
 //   npm run harvest -- <file>       validate a specific file (repeatable)
+//   npm run harvest -- --greenhouse  harvest Greenhouse board tokens instead
+//
+// --greenhouse switches the whole run to the other ATS: its own discovery source,
+// its own validation endpoint, its own slug and dead files. Nothing is shared, so a
+// Greenhouse token that happens to match an Ashby slug does not confuse either.
 //
 // A slug is the first path segment of jobs.ashbyhq.com/{slug}/...
 // Slugs are case-insensitive on Ashby's side, so everything is lowercased before
@@ -17,7 +22,9 @@
 // valid slug and is kept (they post again later).
 
 import fs from 'node:fs';
-import { fromHackerNews, fromGitHub, fromWayback, fromCommonCrawl, fromYCombinator } from '../lib/discover.js';
+import { fromHackerNews, fromGitHub, fromWayback, fromCommonCrawl, fromYCombinator,
+         greenhouseFromWayback } from '../lib/discover.js';
+import { ATS } from '../lib/ats.js';
 import { P } from '../lib/paths.js';
 
 const CONCURRENCY = 12;
@@ -29,8 +36,14 @@ const useWb    = args.includes('--wayback');
 const useCc    = args.includes('--commoncrawl');
 const useYc    = args.includes('--yc');
 const useAll   = args.includes('--discover');
+const GH       = args.includes('--greenhouse');
 const files    = args.filter(a => !a.startsWith('--'));
-const sources  = files.length ? files : [P.raw];
+const sources  = files.length ? files : (GH ? [] : [P.raw]);
+
+// Which ATS this run is for. Everything below reads these rather than hardcoding.
+const ats       = GH ? ATS.greenhouse : ATS.ashby;
+const slugFile  = GH ? P.ghSlugs : P.slugs;
+const deadFile  = GH ? P.ghDead  : P.dead;
 
 const read = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').map(s => s.trim()).filter(Boolean)
@@ -46,7 +59,7 @@ const normalise = (s) => {
   return /^[a-z0-9][a-z0-9._-]{0,80}$/.test(s) ? s : null;
 };
 
-const existing = new Set(read(P.slugs).map(normalise).filter(Boolean));
+const existing = new Set(read(slugFile).map(normalise).filter(Boolean));
 const incoming = new Set(sources.flatMap(read).map(normalise).filter(Boolean));
 
 if (useHn || useAll) {
@@ -98,6 +111,17 @@ if (useYc) {
   console.log(`  ${found.size} candidates to try`);
 }
 
+if (GH) {
+  // The archive is the only source here. Greenhouse tokens do not appear in HN "who
+  // is hiring" comments the way Ashby apply links do — those link to the company's
+  // own careers page far more often.
+  console.log('asking the Wayback Machine for Greenhouse boards...');
+  const found = await greenhouseFromWayback(msg => process.stderr.write(msg + '   \r'));
+  process.stderr.write('\n');
+  for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
+  console.log(`  ${found.size} board tokens in the archive`);
+}
+
 const toCheck = recheck ? new Set([...existing, ...incoming])
                         : new Set([...incoming].filter(s => !existing.has(s)));
 
@@ -108,13 +132,13 @@ const deadList = [];
 let done = 0;
 
 async function check(slug) {
-  const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(slug)}`;
+  const url = ats.boardUrl(slug);
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
       if (r.status === 429) { await new Promise(z => setTimeout(z, 2000 * (attempt + 1))); continue; }
       if (r.ok) {
-        const { jobs = [] } = await r.json();
+        const jobs = ats.postingsFrom(await r.json());
         live.add(slug);
         return `✓ ${slug} (${jobs.length})`;
       }
@@ -138,8 +162,16 @@ await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
   }
 }));
 
-fs.writeFileSync(P.slugs, [...live].sort().join('\n') + '\n');
-if (deadList.length) fs.writeFileSync(P.dead, deadList.sort().join('\n') + '\n');
+fs.writeFileSync(slugFile, [...live].sort().join('\n') + '\n');
+
+// Merged with what earlier runs already proved dead, rather than replaced. A
+// --no-recheck run only ever sees a slice, and overwriting threw the rest away.
+if (deadList.length) {
+  const prevDead = read(deadFile).map(normalise).filter(Boolean);
+  const dead = [...new Set([...prevDead, ...deadList])].filter(s => !live.has(s)).sort();
+  fs.writeFileSync(deadFile, dead.join('\n') + '\n');
+}
 
 const added = [...live].filter(s => !existing.has(s)).length;
-console.log(`\nslugs.txt: ${live.size} live boards (${added} new). ${deadList.length} dead → dead.txt`);
+const name = slugFile.split(/[\\/]/).pop();
+console.log(`\n${name}: ${live.size} live ${ats.label} boards (${added} new). ${deadList.length} dead this run`);

@@ -44,9 +44,12 @@ const read = f => fs.existsSync(f)
   : [];
 
 if (!NOCRAWL) {
-  // Pass --jobs through, so `npm run poll -- --jobs 20` widens the fetch too.
+  // Flags that belong to the fetch are forwarded, so `npm run poll -- --jobs 20` and
+  // `-- --full` reach crawl.js rather than being silently ignored here.
   const ji = process.argv.indexOf('--jobs');
   const pass = ji >= 0 ? ['--jobs', process.argv[ji + 1]] : [];
+  if (process.argv.includes('--full')) pass.push('--full');
+  if (argv.includes('--ats')) pass.push('--ats', argv[argv.indexOf('--ats') + 1]);
   const r = spawnSync(process.execPath, [new URL('./crawl.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), ...pass],
     { stdio: 'inherit' });
   if (r.status !== 0) { console.error('crawl failed — selecting from the corpus as it stands'); }
