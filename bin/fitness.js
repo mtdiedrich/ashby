@@ -20,6 +20,7 @@ import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
 import { completeBatch } from '../lib/batch.js';
 import { isAuthError } from '../lib/keys.js';
+import { appendRows } from '../lib/jsonl.js';
 
 const BATCH = 8;
 const FORCE = process.argv.includes('--force');
@@ -134,6 +135,12 @@ const outcomes = await pool(groups, async (i) => {
   for (const ix of missing) {
     console.warn(`\n  ! no result for "${jobs[ix].title}" after a retry — not scored`);
   }
+  // Written as the batch lands, not banked until the end. fitness.jsonl is
+  // append-only and every reader keys by id or scoredAt, so the order of the file
+  // was never load-bearing — banking it only meant that Ctrl-C, a crash or a killed
+  // terminal threw away everything already scored and paid for.
+  appendRows(P.fitness, rows);
+
   // Ticked here rather than in onDone: a group is BATCH postings, and the bar
   // counts postings, so the caller is the only place that knows the size.
   bar.tick(batch.length);
@@ -155,8 +162,7 @@ if (outcomes.stopped) {
   console.error('  nothing further was attempted. Fix the key and re-run.');
 }
 
-// Collected here rather than pushed from inside the worker, so the order of
-// fitness.jsonl does not depend on which request happened to return first.
+// Already on disk by now; this is only for the report below.
 for (const [gi, o] of outcomes.entries()) {
   if (o.ok) { out.push(...o.value); continue; }
   const size = Math.min(BATCH, jobs.length - groups[gi]);
@@ -170,10 +176,10 @@ const read = f => fs.existsSync(f)
   : [];
 
 // fitness.jsonl is the permanent log: append-only, one line per scoring event,
-// re-scores included. Nothing here queues anything — queue.jsonl is written only
-// when you pick a posting in the UI, so a score can never put an application in
-// front of you that you did not choose.
-fs.appendFileSync(P.fitness, out.map(r => JSON.stringify(r)).join('\n') + (out.length ? '\n' : ''));
+// re-scores included — written per batch above, not here. Nothing queues anything;
+// queue.jsonl is written only when you pick a posting in the UI, so a score can
+// never put an application in front of you that you did not choose.
+//
 // fresh.jsonl is a worklist, not a queue to drain. Truncating it here meant that
 // running fitness before coverage left coverage nothing to do, silently.
 

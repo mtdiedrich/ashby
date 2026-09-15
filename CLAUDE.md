@@ -116,6 +116,19 @@ earlier explanation was wrong.
   Selection code must never read the ask — `test/pay-ask.test.js` enforces this by
   scanning `lib/select.js`, `lib/comp.js`, `lib/filters.js` and `bin/poll.js`.
 
+## Write work as it lands, never at the end
+
+Every script here that banked results in memory and wrote once has lost work:
+embed.js discarded 43 already-purchased vectors on a late failure, apply.js threw
+away a whole run's queue removals on Ctrl-C, and fitness.js lost every score in the
+run if it stopped early — a 1,400-posting run is half an hour and about $32.
+
+Use `appendRows()` from `lib/jsonl.js` inside the worker. These files are append-only
+and every reader keys by id or a timestamp, so **the order of lines in them is not
+load-bearing** — writing in completion order costs nothing. "So the file order is
+deterministic" is what justified banking fitness.js's scores, and it was not worth
+the run.
+
 ## Failures that are the same for every item
 
 A bad API key is the same answer for all of them. One run made 1,396 requests,
