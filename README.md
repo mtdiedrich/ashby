@@ -44,7 +44,8 @@ copy config\context.template.md config\context.md
 
 - **`.env`** — `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` for embeddings (Anthropic has
   no embeddings endpoint).
-- **`config/me.json`** — name, email, location, education, work authorization. Fills forms.
+- **`config/me.json`** — name, email, phone, street and postcode, location, education,
+  work authorization, pay expectations. Fills forms.
 - **`config/context.md`** — your hard constraints, preferences, project write-ups, and a
   few paragraphs in your own voice.
 
@@ -298,6 +299,27 @@ interrupt keeps everything you already dealt with.
 The board separates the two: **submitted** means you said yes. Opening a form and
 closing it used to count as applying, which made the board claim applications that
 were never made.
+
+### Postal address
+
+Boards ask for one on about 1% of forms — 2 of 178 scanned — and when they do it is a
+textarea wanting the whole thing, not a street line. So `me.json` keeps the parts:
+
+```json
+"street": "100 Example Ave",
+"postalCode": "52401"
+```
+
+and they are composed with `location` into `100 Example Ave` / `Cedar Rapids, Iowa 52401`
+(over two lines in a textarea, comma-joined in a single-line input). There is no second
+copy of your city to keep in step.
+
+A standalone zip field is also filled, though none of the 178 forms had one.
+
+The one thing to know: **"Email Address" is a more common label than any real address
+field.** The email rule normally claims it first, but only when an email is configured —
+so the address rule refuses email, website, LinkedIn, GitHub and `Address Line 2`
+outright rather than relying on rule order.
 
 ### Startup delay
 

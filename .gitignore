@@ -4,7 +4,9 @@ profile/
 
 # generated state and personal files
 data/
-config/
+# config/* not config/ — git never descends into an excluded DIRECTORY, so the
+# negations below were dead and neither example file was ever committed.
+config/*
 !config/me.example.json
 !config/context.template.md
 *.log

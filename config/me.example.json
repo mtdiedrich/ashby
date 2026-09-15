@@ -1,0 +1,32 @@
+{
+  "name": "Jane Doe",
+  "firstName": "Jane",
+  "lastName": "Doe",
+  "email": "jane@example.com",
+  "phone": "+1 319 555 0100",
+  "linkedin": "https://www.linkedin.com/in/janedoe",
+  "github": "https://github.com/janedoe",
+
+  "location": "Cedar Rapids, Iowa",
+  "street": "100 Example Ave",
+  "postalCode": "52401",
+  "locationFallbacks": ["Iowa", "United States"],
+
+  "school": "University of Iowa",
+  "degree": "Bachelor's Degree",
+  "discipline": "Computer Science",
+  "gradYear": "2019",
+
+  "authorizedToWork": "yes",
+  "needsSponsorship": "no",
+  "workedHere": "no",
+  "nonCompete": "no",
+  "referralSource": "",
+
+  "_pay": "what to ASK FOR on a form. NOT a screening floor — nothing is filtered out on these. The floor that decides what gets scored lives in context.md.",
+  "salaryExpectation": 165000,
+  "hourlyRate": 150,
+
+  "_declineSelfIdentify": "true (default) auto-selects the decline option on gender/race/veteran/disability questions; set false to answer them yourself",
+  "declineSelfIdentify": true
+}
