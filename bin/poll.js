@@ -44,7 +44,10 @@ const read = f => fs.existsSync(f)
   : [];
 
 if (!NOCRAWL) {
-  const r = spawnSync(process.execPath, [new URL('./crawl.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')],
+  // Pass --jobs through, so `npm run poll -- --jobs 20` widens the fetch too.
+  const ji = process.argv.indexOf('--jobs');
+  const pass = ji >= 0 ? ['--jobs', process.argv[ji + 1]] : [];
+  const r = spawnSync(process.execPath, [new URL('./crawl.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), ...pass],
     { stdio: 'inherit' });
   if (r.status !== 0) { console.error('crawl failed — selecting from the corpus as it stands'); }
   console.log();

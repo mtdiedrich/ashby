@@ -116,3 +116,19 @@ earlier explanation was wrong.
 `score.js` and `apply.js` cost Anthropic tokens per posting; `embed.js` costs OpenAI
 tokens. Say what a run will cost before starting a large one, and prefer `--dry`,
 `--keep`, and `--no-model` when testing.
+
+## Concurrency
+
+Scoring passes run through `pool()` in `lib/pool.js`, not a bare `for await` loop.
+Two things there are load-bearing and easy to undo by accident:
+
+- **Results come back in input order.** `fitness.js` sends `<posting index="N">` and
+  matches the reply on that index. Collecting in completion order attaches scores to
+  the wrong postings, silently.
+- **`warmup: true` runs the first call alone.** The system prompt carries `context.md`
+  and the resume PDF under `cache_control`; the first call writes that cache and the
+  rest read it at ~0.1x. Opening at full width makes the whole first wave miss and
+  each one pay the write premium.
+
+Default is 6, overridable with `--jobs N` or `ASHBY_JOBS`. `--jobs 1` is sequential
+and is the thing to reach for when debugging a prompt.

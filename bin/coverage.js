@@ -33,6 +33,7 @@ import { ask, context } from '../lib/ai.js';
 import { hash } from '../lib/corpus.js';
 import { resumeText } from '../lib/resume-text.js';
 import { progress } from '../lib/progress.js';
+import { pool, jobsFlag } from '../lib/pool.js';
 
 const argv    = process.argv.slice(2);
 const DRY     = argv.includes('--dry');
@@ -43,6 +44,7 @@ const SCORER  = argv.includes('--scorer')
   ? ({ opus: 'claude-opus-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5' }[argv[argv.indexOf('--scorer') + 1]] ?? argv[argv.indexOf('--scorer') + 1])
   : 'claude-haiku-4-5';
 const EXTRACTOR = 'claude-haiku-4-5';
+const JOBS    = jobsFlag(argv);
 
 // Required requirements carry full weight; preferred ones count, but less.
 const PREFERRED_WEIGHT = 0.4;
@@ -165,21 +167,21 @@ if (!needExtract.length && !needScore.length) { console.log('\nnothing to do'); 
 // ---- pass 1: requirements ----------------------------------------------
 
 const exBar = needExtract.length ? progress(needExtract.length, 'requirements') : null;
-for (const w of needExtract) {
-  try {
-    const { requirements } = await ask(
-      EXTRACT_SYSTEM,
-      `<posting>\n${jdText(w.j).slice(0, 14000)}\n</posting>`,
-      { schema: Requirements, maxTokens: 3000, effort: 'low', model: EXTRACTOR },
-    );
-    const row = { jdHash: w.jdHash, id: w.j.id, title: w.j.title, slug: w.j.slug,
-                  requirements, model: EXTRACTOR, at: new Date().toISOString() };
-    fs.appendFileSync(P.requirements, JSON.stringify(row) + '\n');
-    reqCache.set(w.jdHash, row);
-  } catch (e) {
-    console.warn(`\n  ! ${w.j.title}: ${e.message}`);
-  }
-  exBar?.tick();
+const extracted = await pool(needExtract, async (w) => {
+  const { requirements } = await ask(
+    EXTRACT_SYSTEM,
+    `<posting>\n${jdText(w.j).slice(0, 14000)}\n</posting>`,
+    { schema: Requirements, maxTokens: 3000, effort: 'low', model: EXTRACTOR },
+  );
+  const row = { jdHash: w.jdHash, id: w.j.id, title: w.j.title, slug: w.j.slug,
+                requirements, model: EXTRACTOR, at: new Date().toISOString() };
+  // appendFileSync from concurrent workers is safe: it is one synchronous syscall
+  // on a single-threaded runtime, so two lines cannot interleave.
+  fs.appendFileSync(P.requirements, JSON.stringify(row) + '\n');
+  reqCache.set(w.jdHash, row);
+}, { limit: JOBS, warmup: true, onDone: () => exBar?.tick() });
+for (const [k, r] of extracted.entries()) {
+  if (!r.ok) console.warn(`\n  ! ${needExtract[k].j.title}: ${r.error.message}`);
 }
 exBar?.finish();
 
@@ -189,64 +191,69 @@ const SCORE_SYSTEM = scoreSystem(resume);
 const results = [];
 
 const scBar = needScore.length ? progress(needScore.length, 'coverage') : null;
-for (const w of needScore) {
+const scored = await pool(needScore, async (w) => {
   const reqs = reqCache.get(w.jdHash)?.requirements;
-  if (!reqs?.length) { scBar?.tick(); continue; }
+  // Nothing extracted for this posting, so there is nothing to score against.
+  if (!reqs?.length) return null;
 
-  try {
-    const { scores } = await ask(
-      SCORE_SYSTEM,
-      `<role>${w.j.title} at ${w.j.slug}</role>\n<requirements>\n` +
-        reqs.map((r, k) => `${k}. [${r.required ? 'required' : 'preferred'}] ${r.text}`).join('\n') +
-        `\n</requirements>`,
-      { schema: Assessment, maxTokens: 4000, effort: 'low', model: SCORER },
-    );
+  const { scores } = await ask(
+    SCORE_SYSTEM, `<role>${w.j.title} at ${w.j.slug}</role>\n<requirements>\n` +
+      reqs.map((r, k) => `${k}. [${r.required ? 'required' : 'preferred'}] ${r.text}`).join('\n') +
+      `\n</requirements>`,
+    { schema: Assessment, maxTokens: 4000, effort: 'low', model: SCORER },
+  );
 
-    const byIndex = new Map(scores.map(s => [s.index, s]));
-    const detail = reqs.map((r, k) => {
-      const s = byIndex.get(k);
-      return {
-        ...r,
-        score: Math.max(0, Math.min(MAX_POINTS, s?.score ?? 0)),
-        evidence: s?.evidence ?? 'not returned',
-      };
-    });
-
-    // Logistics are not capabilities. "On-site 3 days per week in SF" always scores 0
-    // because no resume demonstrates willingness to be somewhere, and counting that as
-    // a failed requirement drags fitness down for a question the resume cannot answer.
-    // They are reported separately, as things to check against your own constraints.
-    const capability = detail.filter(d => d.kind !== 'logistics');
-    const constraints = detail.filter(d => d.kind === 'logistics');
-
-    let num = 0, den = 0, met = 0;
-    for (const d of capability) {
-      const weight = d.required ? 1 : PREFERRED_WEIGHT;
-      num += d.score * weight; den += MAX_POINTS * weight;
-      if (d.score >= 2) met++;
-    }
-
-    const plain = capability.length
-      ? capability.reduce((a, d) => a + d.score, 0) / (capability.length * MAX_POINTS)
-      : 0;
-    const row = {
-      key: w.key, jdHash: w.jdHash, resumeHash: resumeHash,
-      id: w.j.id, title: w.j.title, slug: w.j.slug,
-      applyUrl: w.j.applyUrl, jobUrl: w.j.jobUrl,
-      coverage: Number((den ? num / den : 0).toFixed(4)),
-      coverageUnweighted: Number(plain.toFixed(4)),
-      met, total: capability.length,
-      gaps: capability.filter(d => d.required && d.score <= 1).map(d => d.text),
-      constraints: constraints.map(d => d.text),
-      requirements: detail,
-      model: SCORER, at: new Date().toISOString(),
+  const byIndex = new Map(scores.map(s => [s.index, s]));
+  const detail = reqs.map((r, k) => {
+    const s = byIndex.get(k);
+    return {
+      ...r,
+      score: Math.max(0, Math.min(MAX_POINTS, s?.score ?? 0)),
+      evidence: s?.evidence ?? 'not returned',
     };
-    fs.appendFileSync(P.coverage, JSON.stringify(row) + '\n');
-    results.push(row);
-  } catch (e) {
-    console.warn(`\n  ! ${w.j.title}: ${e.message}`);
+  });
+
+  // Logistics are not capabilities. "On-site 3 days per week in SF" always scores 0
+  // because no resume demonstrates willingness to be somewhere, and counting that as
+  // a failed requirement drags fitness down for a question the resume cannot answer.
+  // They are reported separately, as things to check against your own constraints.
+  const capability = detail.filter(d => d.kind !== 'logistics');
+  const constraints = detail.filter(d => d.kind === 'logistics');
+
+  let num = 0, den = 0, met = 0;
+  for (const d of capability) {
+    const weight = d.required ? 1 : PREFERRED_WEIGHT;
+    num += d.score * weight; den += MAX_POINTS * weight;
+    if (d.score >= 2) met++;
   }
-  scBar?.tick();
+
+  const plain = capability.length
+    ? capability.reduce((a, d) => a + d.score, 0) / (capability.length * MAX_POINTS)
+    : 0;
+  const row = {
+    key: w.key, jdHash: w.jdHash, resumeHash: resumeHash,
+    id: w.j.id, title: w.j.title, slug: w.j.slug,
+    applyUrl: w.j.applyUrl, jobUrl: w.j.jobUrl,
+    coverage: Number((den ? num / den : 0).toFixed(4)),
+    coverageUnweighted: Number(plain.toFixed(4)),
+    met, total: capability.length,
+    gaps: capability.filter(d => d.required && d.score <= 1).map(d => d.text),
+    constraints: constraints.map(d => d.text),
+    requirements: detail,
+    model: SCORER, at: new Date().toISOString(),
+  };
+  fs.appendFileSync(P.coverage, JSON.stringify(row) + '\n');
+  results.push(row);
+}, {
+  limit: JOBS,
+  // The first call writes the prompt cache (context.md + the resume PDF); the rest
+  // read it. Opening at full width would have the whole first wave miss and each
+  // pay the write premium.
+  warmup: true,
+  onDone: () => scBar?.tick(),
+});
+for (const [k, r] of scored.entries()) {
+  if (!r.ok) console.warn(`\n  ! ${needScore[k].j.title}: ${r.error.message}`);
 }
 scBar?.finish();
 

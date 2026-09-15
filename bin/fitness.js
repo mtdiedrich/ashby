@@ -17,10 +17,12 @@ import { z } from 'zod';
 import { ask, context, MODEL } from '../lib/ai.js';
 import { resumeBlock } from '../lib/resume.js';
 import { progress } from '../lib/progress.js';
+import { pool, jobsFlag } from '../lib/pool.js';
 
 const BATCH = 8;
 const FORCE = process.argv.includes('--force');
 const DRY   = process.argv.includes('--dry');
+const JOBS  = jobsFlag(process.argv);
 
 const readJsonl = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
@@ -76,7 +78,14 @@ ${context()}
 
 const out = [];
 const bar = progress(jobs.length, 'judging');
-for (let i = 0; i < jobs.length; i += BATCH) {
+
+// Postings are grouped BATCH to a request, and the requests then run a few at a
+// time. Sequentially this was ~40s per request — 40 minutes for 477 postings,
+// almost all of it waiting on one round trip at a time.
+const groups = [];
+for (let i = 0; i < jobs.length; i += BATCH) groups.push(i);
+
+const outcomes = await pool(groups, async (i) => {
   const batch = jobs.slice(i, i + BATCH);
   const user = batch.map((j, k) => {
     const pay = j.salary ? j.salary.summary : 'not stated';
@@ -95,10 +104,11 @@ ${(j.descriptionPlain || '(no description)').slice(0, 7000)}
 
   const { results } = await ask(SYSTEM, user, { schema: Scored, maxTokens: 8000, documents: [RESUME] });
 
+  const rows = [];
   for (const r of results) {
     const j = jobs[r.index];
     if (!j) { console.warn(`  ! model returned index ${r.index}, no such posting — dropped`); continue; }
-    out.push({
+    rows.push({
       ...r,
       id: j.id, title: j.title, slug: j.slug,
       location: j.location, salary: j.salary,
@@ -110,7 +120,25 @@ ${(j.descriptionPlain || '(no description)').slice(0, 7000)}
   for (let k = 0; k < batch.length; k++) {
     if (!got.has(i + k)) console.warn(`\n  ! no result for "${batch[k].title}" — not scored`);
   }
+  // Ticked here rather than in onDone: a group is BATCH postings, and the bar
+  // counts postings, so the caller is the only place that knows the size.
   bar.tick(batch.length);
+  return rows;
+}, {
+  limit: JOBS,
+  // The first request writes the prompt cache (context.md + the resume PDF) and
+  // the rest read it. Opening at full width makes the whole first wave miss, and
+  // each one pays the write premium instead of one paying it.
+  warmup: true,
+});
+
+// Collected here rather than pushed from inside the worker, so the order of
+// fitness.jsonl does not depend on which request happened to return first.
+for (const [gi, o] of outcomes.entries()) {
+  if (o.ok) { out.push(...o.value); continue; }
+  const size = Math.min(BATCH, jobs.length - groups[gi]);
+  console.warn(`\n  ! a batch of ${size} failed: ${o.error.message}`);
+  bar.tick(size);   // a failed batch never ticked itself
 }
 bar.finish();
 

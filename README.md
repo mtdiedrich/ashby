@@ -169,10 +169,10 @@ sorted by variance, not by fit.
 
 | Command | What it does |
 |---|---|
-| `npm run poll` | Fetch every board into `corpus.jsonl`, rewrite `fresh.jsonl` with what still needs scoring. `--dry`, `--no-crawl`, `--all` (ignore title filter), `--anywhere` (ignore location), `--limit N`. |
+| `npm run poll` | Fetch every board into `corpus.jsonl`, rewrite `fresh.jsonl` with what still needs scoring. `--dry`, `--no-crawl`, `--all` (ignore title filter), `--anywhere` (ignore location), `--limit N`, `--jobs N` (boards fetched at once, default 12). |
 | `npm run score` | All three scorers over the worklist. |
-| `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`. |
-| `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`. |
+| `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`, `--jobs N` (requests at once, default 6). |
+| `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`, `--jobs N` (requests at once, default 6). |
 | `npm run similarity` | Embed the staged postings and the resume, so they have a similarity score. `--dry` prices it first, `--force` re-embeds regardless, `--corpus` embeds the whole corpus rather than just the worklist. |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run apply` | Fill the queued forms. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`. |
@@ -207,6 +207,30 @@ it refused are **red**:
   to anything on your behalf.
 - **Anything not answerable from `context.md`.** The model skips rather than guessing,
   because a plausible invented answer on a job application is worse than a gap.
+
+### How long a run takes
+
+Scoring is almost entirely waiting on the API, so it runs several requests at once.
+Measured on 24 postings:
+
+| | |
+|---|---|
+| `--jobs 1` (sequential) | 6m 19s |
+| `--jobs 6` (default) | 1m 32s |
+
+A full 500-posting run is roughly 25 minutes rather than two hours. Raise it with
+`--jobs N` or `ASHBY_JOBS=N`; the ceiling is your account's tokens-per-minute limit,
+and past it you get 429s, which `ask()` retries with backoff — so overshooting costs
+time rather than results.
+
+`--jobs 1` restores the old sequential behaviour, which is worth having when you are
+debugging a prompt and want the output in order.
+
+The first request of every run goes out alone. It writes the prompt cache — your
+`context.md` and resume PDF — and everything after reads it at a fraction of the
+price. Starting all six at once would have all six miss and each pay the write.
+
+`poll` passes `--jobs` through to the board fetch, where it defaults to 12.
 
 ### Pay expectations
 

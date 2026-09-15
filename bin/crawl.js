@@ -16,8 +16,12 @@ import fs from 'node:fs';
 import { P } from '../lib/paths.js';
 import { tidy } from '../lib/text.js';
 import { corpus, embedText, hash, rawLineCount } from '../lib/corpus.js';
+import { jobsFlag } from '../lib/pool.js';
 
-const CONCURRENCY = 8;
+// Boards are fetched a few at a time. 12 matches what harvest.js already uses
+// against the same public API; --jobs raises it if you are impatient, but this is
+// someone else's free endpoint and 3,800 boards is already a lot to ask of it.
+const CONCURRENCY = jobsFlag(process.argv, 12);
 const STATS_ONLY = process.argv.includes('--stats');
 
 if (STATS_ONLY) {
