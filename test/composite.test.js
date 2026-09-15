@@ -26,12 +26,14 @@ test('a column of nothing but nulls stays null', () => {
 
 test('composite sums the four normalised values', () => {
   const rows = [
-    { fitness: 0, coverage: 0, similarity: 0, daysLive: 10 },
+    { fitness: 0, coverage: 0, similarity: 0, daysLive: 9999 },
     { fitness: 1, coverage: 1, similarity: 1, daysLive: 0 },
   ];
   const out = composite(rows);
-  assert.equal(out[0].total, 0);          // worst on every axis, oldest
-  assert.equal(out[1].total, 4);          // best on every axis, freshest
+  // Freshness decays rather than min-maxing, so an ancient posting tends to 0 but
+  // is not forced there by being the oldest in the set.
+  assert.ok(out[0].total < 0.01, 'worst on every axis and ancient');
+  assert.equal(out[1].total, 4, 'best on every axis, listed today');
 });
 
 test('composite is null unless all four parts exist', () => {
@@ -72,4 +74,56 @@ test('fresher scores higher than staler', () => {
 
 test('an empty set does not throw', () => {
   assert.deepEqual(composite([]), []);
+});
+
+// ---- freshness decay ----------------------------------------------------
+
+import { freshness, HALF_LIFE_DAYS } from '../lib/composite.js';
+
+test('a posting listed today is worth the full amount', () => {
+  assert.equal(freshness(0), 1);
+});
+
+test('value halves every half-life', () => {
+  const h = HALF_LIFE_DAYS;
+  assert.ok(Math.abs(freshness(h) - 0.5) < 1e-9);
+  assert.ok(Math.abs(freshness(2 * h) - 0.25) < 1e-9);
+  assert.ok(Math.abs(freshness(3 * h) - 0.125) < 1e-9);
+});
+
+test('decay is steep early and flat late — the point of using a curve', () => {
+  const firstWeek = freshness(0) - freshness(7);
+  const tenthWeek = freshness(63) - freshness(70);
+  assert.ok(firstWeek > tenthWeek * 10,
+    `the first week should cost far more than the tenth (${firstWeek.toFixed(3)} vs ${tenthWeek.toFixed(3)})`);
+});
+
+test('always decreasing, never negative', () => {
+  let prev = Infinity;
+  for (const d of [0, 1, 7, 30, 90, 365, 965, 5000]) {
+    const v = freshness(d);
+    assert.ok(v < prev, `${d}d should be worth less than the day before`);
+    assert.ok(v >= 0, `${d}d must not go negative`);
+    prev = v;
+  }
+});
+
+test('an unknown age is null, not zero', () => {
+  assert.equal(freshness(null), null);
+  assert.equal(freshness(undefined), null);
+});
+
+test('freshness is absolute, so one ancient posting cannot compress the rest', () => {
+  // The min-max version gave a 3-day-old 1.00 and a 215-day-old 0.78 because a
+  // 965-day-old posting set the floor. Decay does not care what else is in the set.
+  const withOutlier  = composite([
+    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 3 },
+    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 965 },
+  ]);
+  const withoutIt = composite([
+    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 3 },
+    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 20 },
+  ]);
+  assert.equal(withOutlier[0].nFresh, withoutIt[0].nFresh,
+    'the 3-day-old posting scores the same regardless of what it sits beside');
 });

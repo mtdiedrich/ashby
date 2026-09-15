@@ -125,15 +125,17 @@ Queueing is the only thing that writes `queue.jsonl`, and `apply` reads nothing 
 **Not interested** writes `dismissed.jsonl` and keeps `poll` from proposing it again —
 reversible, and the only "no" the system records.
 
-**total** is the four numeric columns min-maxed across the rows currently shown and
-summed, 0–4, with the four normalised parts underneath. Days live is inverted, so
-fresher scores higher. It is blank until all four exist — an unscored posting is
-unknown, not bad. Normalisation is relative to what is on screen, so changing the
-filters re-scales it.
+**total** sums four values, 0–4, with the parts shown underneath. Fitness, coverage and
+similarity are min-maxed across the rows currently shown, so the total ranks within
+what is on screen and re-scales when you change the filters. It is blank until all four
+exist — an unscored posting is unknown, not bad.
 
-Min-max is outlier-sensitive, and days live is the column where that bites: one
-965-day-old posting compresses everything else into the top of the range, so freshness
-contributes less than the other three.
+Freshness is not min-maxed. It **halves every 7 days** — listed today scores 1.00, a
+week old 0.50, a fortnight 0.25, a month 0.05, and anything past two months is
+effectively zero. Applying early is most of the advantage a job board gives you, and a
+linear scale does not express that. It is also absolute, so a posting does not get
+fresher because something older turned up beside it.  in
+ if you want it gentler.
 
 Scores drift between runs on identical input. The score column shows the spread when a
 posting has been judged more than once; anything straddling your threshold is being
