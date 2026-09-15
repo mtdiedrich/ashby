@@ -1,8 +1,9 @@
 // Stage 0 — validate candidate slugs and merge them into slugs.txt.
 //
-//   node harvest.js                 validate raw.txt + re-check slugs.txt
-//   node harvest.js candidates.txt  validate a specific file (repeatable)
-//   node harvest.js --no-recheck    skip re-validating slugs already in slugs.txt
+//   npm run harvest                 validate raw.txt + re-check slugs.txt
+//   npm run harvest -- --hn         pull candidates off Hacker News first
+//   npm run harvest -- --no-recheck skip re-validating slugs already in slugs.txt
+//   npm run harvest -- <file>       validate a specific file (repeatable)
 //
 // A slug is the first path segment of jobs.ashbyhq.com/{slug}/...
 // Slugs are case-insensitive on Ashby's side, so everything is lowercased before
@@ -11,11 +12,13 @@
 // valid slug and is kept (they post again later).
 
 import fs from 'node:fs';
+import { fromHackerNews } from '../lib/discover.js';
 import { P } from '../lib/paths.js';
 
 const CONCURRENCY = 12;
 const args     = process.argv.slice(2);
 const recheck  = !args.includes('--no-recheck');
+const useHn    = args.includes('--hn');
 const files    = args.filter(a => !a.startsWith('--'));
 const sources  = files.length ? files : [P.raw];
 
@@ -35,6 +38,16 @@ const normalise = (s) => {
 
 const existing = new Set(read(P.slugs).map(normalise).filter(Boolean));
 const incoming = new Set(sources.flatMap(read).map(normalise).filter(Boolean));
+
+if (useHn) {
+  // Hacker News "Who is hiring" threads are dense with Ashby apply links, and
+  // Algolia indexes every comment behind a public API — no browser, no CAPTCHA.
+  console.log('searching Hacker News for Ashby boards...');
+  const found = await fromHackerNews(msg => process.stderr.write(msg + '\r'));
+  process.stderr.write('\n');
+  for (const s of found) { const n = normalise(s); if (n) incoming.add(n); }
+  console.log(`  ${found.size} slugs mentioned on HN`);
+}
 
 const toCheck = recheck ? new Set([...existing, ...incoming])
                         : new Set([...incoming].filter(s => !existing.has(s)));

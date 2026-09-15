@@ -177,7 +177,7 @@ sorted by variance, not by fit.
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run apply` | Fill the queued forms. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`. |
 | `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
-| `npm run harvest` | Validate candidate slugs from `data/raw.txt` into `slugs.txt`. `--no-recheck`. |
+| `npm run harvest` | Find and validate new company boards. `--hn` scrapes Hacker News for them first; otherwise reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
 | `npm run test-fill` | Run the form filler headless against any apply URL. No model, no submit. |
 | `npm run check-docs` | Fail if this README has drifted from the code. |
 | `npm test` | The suite. |
@@ -245,18 +245,34 @@ move data\fitness.jsonl data\fitness.old.jsonl
 **Model** — `claude-opus-5` by default: `$env:ASHBY_MODEL = "claude-sonnet-5"`.
 
 **More companies** — Ashby has no cross-org search; each company has its own board at
-`api.ashbyhq.com/posting-api/job-board/{slug}`. Put candidate slugs or pasted
-`jobs.ashbyhq.com/...` URLs in `data/raw.txt` and run `npm run harvest`. To collect
-them, search `site:jobs.ashbyhq.com "ML Engineer"` and run this on each results page in
-DevTools:
+`api.ashbyhq.com/posting-api/job-board/{slug}`, so coverage is entirely a question of
+how many slugs you know.
+
+```powershell
+npm run harvest -- --hn
+```
+
+Hacker News is the best source and the only automatable one. The monthly "Who is
+hiring" threads are thick with Ashby apply links, and Algolia indexes every comment
+behind a public API — no browser, no CAPTCHA, no key. One pass took this project from
+87 boards to 346. Slugs are validated before they are kept; a link from a two-year-old
+comment is often a company that has since moved ATS or folded.
+
+Re-run it occasionally. It is cheap, and each new board arrives with its whole back
+catalogue, so expect a burst of old postings the first time one appears.
+
+To add boards by hand, put slugs or pasted `jobs.ashbyhq.com/...` URLs in
+`data/raw.txt` and run `npm run harvest`. A Google search for
+`site:jobs.ashbyhq.com "ML Engineer"` with this in DevTools on each results page still
+works, it is just manual — Google CAPTCHAs headless browsers fast:
 
 ```js
 copy([...new Set([...document.querySelectorAll('a[href*="jobs.ashbyhq.com"]')]
   .map(a => new URL(a.href).pathname.split('/')[1]).filter(Boolean))].join('\n'));
 ```
 
-Google CAPTCHAs headless browsers fast, which is why that step is manual. Boards on
-custom domains never show up in a `site:` search — same API, different hostname.
+Boards on custom domains never show up in a `site:` search — same API, different
+hostname, add those by hand.
 
 ---
 
