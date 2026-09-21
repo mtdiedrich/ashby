@@ -172,7 +172,7 @@ sorted by variance, not by fit.
 |---|---|
 | `npm run poll` | Fetch every board into `corpus.jsonl`, rewrite `fresh.jsonl` with what still needs scoring. `--dry`, `--no-crawl`, `--all` (ignore title filter), `--anywhere` (ignore location), `--limit N`, `--jobs N` (boards fetched at once, default 12), `--ats ashby|greenhouse` (fetch just one), `--full` (store every description). |
 | `npm run score` | All three scorers over the worklist. |
-| `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`, `--jobs N` (requests at once, default 6), `--batch` (half price, see below). |
+| `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`, `--jobs N` (requests at once, default 6), `--batch` (half price, see below), `--effort LEVEL` and `--think N` (how hard the model works — see below). |
 | `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`, `--jobs N` (requests at once, default 6), `--batch` (half price, see below). |
 | `npm run similarity` | Embed the staged postings and the resume, so they have a similarity score. `--dry` prices it first, `--force` re-embeds regardless, `--corpus` embeds the whole corpus rather than just the worklist. |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
@@ -267,6 +267,30 @@ every board load *and* every row you opened.
 
 Measured after: 8 keystrokes block the main thread for 0 ms; `/api/detail` returns in
 under 100 ms.
+
+### How hard the model works: `--effort` and `--think`
+
+```powershell
+npm run fitness -- --effort low
+npm run fitness -- --think 4000 --force
+```
+
+Two knobs, because the models split on which one they take.
+
+`--effort LEVEL` is `low`, `medium`, `high` (the default), `xhigh` or `max`. It steers
+the adaptive thinking that Sonnet 5, Opus 5 and Fable 5.1 do on their own; output
+tokens climb with the level, and output is where a fitness run's money goes.
+
+`--think N` is for Haiku 4.5, which does no thinking at all unless given an explicit
+budget in tokens. Over the same 30 postings that showed: it put 20 of 30 into a single 0.2-wide band where Sonnet used the whole
+range, and rated a SLAM robotics role 0.38 against Sonnet's 0.05. The budget must be
+below `max_tokens`, which fitness sets to 8000.
+
+The shape is per-model and was checked against the live API rather than inferred:
+Haiku 4.5 returns 400 *"adaptive thinking is not supported on this model"* and wants
+`{type:'enabled', budget_tokens:N}`, while the three newer models reject
+`budget_tokens` and want adaptive. `buildRequest()` refuses the wrong combination
+before the first request, because it is the same answer for every posting in the run.
 
 ### What a run costs
 

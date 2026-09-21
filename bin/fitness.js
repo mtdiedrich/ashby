@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
 import { z } from 'zod';
-import { ask, askBatch, parseBatchResult, context, MODEL, preflight } from '../lib/ai.js';
+import { ask, askBatch, parseBatchResult, context, MODEL, preflight, effortFlag, thinkFlag } from '../lib/ai.js';
 import { resumeBlock } from '../lib/resume.js';
 import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
@@ -32,6 +32,23 @@ const FORCE = process.argv.includes('--force');
 const DRY   = process.argv.includes('--dry');
 const JOBS  = jobsFlag(process.argv);
 const USE_BATCH = process.argv.includes('--batch');
+// How hard the model works. Two knobs, because the models split on which they take:
+// Sonnet, Opus and Fable think adaptively and are steered by --effort; Haiku 4.5
+// does not think at all unless given an explicit --think budget. Measured over the
+// same 30 postings, Haiku with no thinking put 20 of them into one 0.2-wide band
+// where Sonnet used the whole range. Both parsers live in lib so they can be tested.
+//
+// low, not high, because it was measured rather than assumed. Scoring the same 30
+// postings at each: low agrees with high at rho 0.919 and 0.093 mean absolute
+// difference — against a noise floor of rho 0.953 and 0.053, which is how much
+// Sonnet at high disagrees with ITS OWN previous run on the same input. It holds the
+// spread (sd 0.236 vs 0.234) and still puts the robotics and wet-lab postings at the
+// bottom, for 62% fewer output tokens. Pass --effort high when a run deserves it.
+let EFFORT, THINK;
+try {
+  EFFORT = effortFlag(process.argv, 'low');
+  THINK = thinkFlag(process.argv);
+} catch (e) { console.error(e.message); process.exit(1); }
 
 const readJsonl = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
@@ -48,6 +65,9 @@ const already = new Set(readJsonl(P.fitness).map(r => r.id));
 const jobs = FORCE ? staged : staged.filter(j => !already.has(j.id));
 
 console.log(`${staged.length} staged · ${staged.length - jobs.length} already judged · ${jobs.length} to judge`);
+// Which model and how hard it worked, because both are now flags and the bill
+// differs by 4x across them. coverage.js prints its two models for the same reason.
+console.log(`  ${MODEL} · effort ${EFFORT}${THINK == null ? '' : ` · thinking ${THINK}`}`);
 if (!jobs.length) { console.log('nothing to do'); process.exit(0); }
 if (DRY) { console.log('--dry, nothing called'); process.exit(0); }
 
@@ -139,7 +159,7 @@ if (USE_BATCH) {
   }));
 
   const results = await askBatch(reqs, {
-    schema: Scored, maxTokens: 8000, documents: [RESUME],
+    schema: Scored, maxTokens: 8000, documents: [RESUME], thinkBudget: THINK, effort: EFFORT,
     label: 'fitness', itemsPer: BATCH, model: MODEL,
     onProgress: (done) => bar.set(Math.min(done * BATCH, jobs.length)),
   });
@@ -173,7 +193,7 @@ const outcomes = await pool(groups, async (i) => {
   const { results, missing } = await completeBatch(want, async (indices) => {
     const user = indices.map(ix => describe(jobs[ix], ix)).join('\n\n');
     const { results } = await ask(SYSTEM, user, { schema: Scored, maxTokens: 8000, documents: [RESUME],
-      label: 'fitness', items: indices.length });
+      thinkBudget: THINK, effort: EFFORT, label: 'fitness', items: indices.length });
     return results;
   });
 
