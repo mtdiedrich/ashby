@@ -6,10 +6,65 @@ test('wantedTitle accepts the role shapes we are looking for', () => {
   for (const t of [
     'Machine Learning Engineer', 'ML Engineer', 'Senior MLOps Engineer',
     'ML Ops Infrastructure Engineer', 'LLM Engineer', 'AI Engineer',
-    'Applied Scientist', 'Research Engineer', 'ML Infrastructure Engineer',
+    'ML Infrastructure Engineer',
     'Systems Architect AI/ML Infrastructure', 'Computer Vision Engineer',
     'Deep Learning Engineer', 'NLP Engineer', 'Applied AI Engineer',
   ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
+});
+
+// Dropped from WANT: they matched too much that was not the job. A bare "Research
+// Engineer" is a research-lab title, "Applied Scientist" is Amazon's name for a
+// research role, and "Foundation Model" reaches pretraining teams. The ML ones still
+// arrive through their own keyword — "Research Engineer, Machine Learning" matches
+// on "machine learning" — which is the same reason "research scientist" came out.
+test('wantedTitle no longer accepts bare research and applied-science titles', () => {
+  for (const t of [
+    'Applied Scientist', 'Research Engineer', 'Senior Applied Scientist',
+    'Foundation Model Engineer', 'Research Engineer, Robotics',
+  ]) assert.equal(wantedTitle(t), false, `should reject: ${t}`);
+});
+
+test('but the same roles still arrive when the title says ML', () => {
+  for (const t of [
+    'Research Engineer, Machine Learning', 'Applied Scientist, LLM',
+    'Research Scientist, Machine Learning', 'Foundation Model ML Engineer',
+  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
+});
+
+// "lead" and "leader" are not the same cut. A Lead ML Engineer is usually a staff
+// IC title and sits inside the mid-to-senior scope; an AI Leader is management.
+// Rejecting "lead" outright removed 78 postings, about half of them senior IC.
+test('wantedTitle keeps lead-titled roles, which are usually senior IC', () => {
+  for (const t of [
+    'Lead Machine Learning Engineer', 'ML Engineer, Team Lead',
+    'Lead AI Engineer', 'Technical Lead - Machine Learning',
+    'Lead Applied AI Engineer', 'Lead AI/ML Engineer',
+  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
+});
+
+test('wantedTitle rejects leader-titled roles, which are management', () => {
+  for (const t of [
+    'Enterprise Applied AI Leader', 'Machine Learning Engineer, Team Leader',
+    'AI Engineering Leader', 'Leader, Machine Learning Platform',
+  ]) assert.equal(wantedTitle(t), false, `should reject: ${t}`);
+});
+
+// Two things REJECT could plausibly catch by accident and does not. Both are here
+// because the list holds phrases, not their individual words: "developer advocate"
+// cannot match a bare Developer, and "people ops" cannot match ML Ops.
+test('REJECT does not catch developers through "developer advocate"', () => {
+  for (const t of [
+    'Machine Learning Developer', 'Senior AI Engineer / Developer',
+    'LLM Developer',
+  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
+  assert.equal(wantedTitle('AI Developer Advocate'), false, 'the phrase itself still rejects');
+});
+
+test('REJECT does not catch ML Ops through "people ops"', () => {
+  for (const t of [
+    'ML Ops Engineer', 'MLOps Engineer', 'Senior ML Ops Platform Engineer',
+  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
+  assert.equal(wantedTitle('People Ops Manager'), false, 'the phrase itself still rejects');
 });
 
 test('wantedTitle rejects titles that merely mention ML', () => {
@@ -79,21 +134,28 @@ test('a research scientist role that names ML or AI still qualifies', () => {
   for (const t of [
     'Research Scientist, Machine Learning',
     'ML Research Scientist - Representation Learning',
-    'Research Scientist, Foundation Models',
   ]) {
     assert.equal(wantedTitle(t), true, `"${t}" should still pass`);
   }
 });
 
-test('research engineer is untouched', () => {
-  for (const t of ['Research Engineer', 'Senior Research Engineer', 'Research Engineer, LLM']) {
-    assert.equal(wantedTitle(t), true, `"${t}" should still pass`);
+// "Research Scientist, Foundation Models" used to reach the board on "foundation
+// model" alone. With that term dropped it no longer names ML or AI anywhere in the
+// title, and a research-lab title with no ML keyword is exactly what came out.
+test('a research title with no ML keyword left does not qualify', () => {
+  for (const t of [
+    'Research Scientist, Foundation Models',
+    'Research Engineer', 'Senior Research Engineer',
+    'Applied Scientist', 'Senior Applied Scientist',
+  ]) {
+    assert.equal(wantedTitle(t), false, `"${t}" should not qualify`);
   }
 });
 
-test('other scientist titles are untouched', () => {
-  assert.equal(wantedTitle('Applied Scientist'), true);
-  assert.equal(wantedTitle('ML Scientist'), true);
+test('the same titles qualify again once they name ML', () => {
+  for (const t of ['Research Engineer, LLM', 'ML Scientist', 'Applied Scientist, NLP']) {
+    assert.equal(wantedTitle(t), true, `"${t}" should still pass`);
+  }
 });
 
 // Wet-lab, pharma and chemistry roles reach the board through a real ML keyword —
@@ -120,7 +182,6 @@ test('bench-science roles are rejected even when the title says ML', () => {
 test('ML infrastructure is not bench science, whatever the adjacent word', () => {
   for (const t of [
     'Senior AI Infrastructure Engineer, Physical Infrastructure',
-    'Robotics / Physical AI Research Engineer',
     'Principal Machine Learning Researcher (Physical AI)',
     'Senior Machine Learning Engineer, AI Infrastructure',
     'Machine Learning Engineer, Search Quality',
