@@ -33,6 +33,7 @@ import { wantedTitle, usLocation } from '../lib/filters.js';
 import { topUnscored } from '../lib/select.js';
 import { appliedIds, openedIds } from '../lib/applog.js';
 import { adapterFor, postingUrl } from '../lib/ats.js';
+import { summaryOf, detailOf } from '../lib/board-row.js';
 import { composite } from '../lib/composite.js';
 import { salaryOf } from '../lib/comp.js';
 import * as vec from '../lib/vec.js';
@@ -57,6 +58,19 @@ function newestById(rows, stamp) {
   return m;
 }
 
+// corpus.jsonl is ~190MB and 246,000 postings — a full parse is about 1.5 seconds.
+// It was re-read on every request, which put 1.5s on each board load AND on every
+// row you expand. It only changes when crawl runs, so cache it on mtime the way
+// vectors already is.
+let ccache = { mtime: 0, map: null };
+function corpusCached() {
+  const stat = fs.existsSync(P.corpus) ? fs.statSync(P.corpus) : null;
+  if (!stat) return new Map();
+  if (ccache.map && ccache.mtime === stat.mtimeMs) return ccache.map;
+  ccache = { mtime: stat.mtimeMs, map: corpus() };
+  return ccache.map;
+}
+
 // vectors.jsonl is ~35MB and the corpus mean is a full pass over it. Both are stable
 // between embed.js runs, so cache on mtime rather than paying that on every request.
 let vcache = { mtime: 0, stored: null, mu: null };
@@ -72,7 +86,7 @@ function vectors() {
 
 /** Every posting we know about, with whichever of the three numbers exist. */
 function board({ all = false, us = false, remote = false, scoredOnly = false, limit = 600 } = {}) {
-  const corp = corpus();
+  const corp = corpusCached();
 
   const fit = newestById(read(P.fitness), 'scoredAt');
   const cov = newestById(read(P.coverage), 'at');
@@ -159,7 +173,10 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
     (b.similarity ?? -9) - (a.similarity ?? -9));
 
   return {
-    jobs: scored.slice(0, limit),
+    // Lean rows only. Shipping descriptions and requirement evidence for every row
+    // made one response 5.8 MB, and the page rebuilt all of it as HTML on every
+    // keystroke. The pane fetches its own detail when a row is opened.
+    jobs: scored.slice(0, limit).map(summaryOf),
     total: scored.length,
     counts: {
       fitness: scored.filter(r => r.fitness != null).length,
@@ -176,7 +193,7 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
 
 /** Stage a posting into fresh.jsonl so fitness.js / coverage.js pick it up next run. */
 async function stage(id) {
-  const c = corpus().get(id);
+  const c = corpusCached().get(id);
   if (!c) return { ok: false, error: 'not in the corpus' };
   if (read(P.fresh).some(r => r.id === id)) return { ok: true, already: true };
 
@@ -248,7 +265,7 @@ function setQueued(id, wanted) {
   // on similarity alone, before fitness.js has ever looked at it.
   const judged = read(P.fitness).filter(r => r.id === id)
     .sort((a, b) => (a.scoredAt ?? '').localeCompare(b.scoredAt ?? '')).pop();
-  const c = corpus().get(id);
+  const c = corpusCached().get(id);
   const row = judged ?? (c ? asPosting(c, null, salaryOf) : null);
   if (!row) return { ok: false, error: 'nothing on record for that posting' };
 
@@ -272,6 +289,31 @@ const server = http.createServer((req, res) => {
       remote: q.get('remote') === '1',
       scoredOnly: q.get('scored') === '1',
       limit: Math.min(Number(q.get('limit')) || 600, 6000),
+    })));
+  }
+
+  // The expanded pane's content, for one posting. Fetched on expand rather than
+  // shipped with every row — descriptions and requirement evidence were 5.1 MB of a
+  // 5.8 MB board response, for panes that are hidden until you open them.
+  if (req.method === 'GET' && req.url.startsWith('/api/detail')) {
+    const id = new URL(req.url, 'http://x').searchParams.get('id');
+    const c = corpusCached().get(id);
+    if (!c) return send(404, 'application/json', JSON.stringify({ error: 'not in the corpus' }));
+
+    const f = newestById(read(P.fitness), 'scoredAt').get(id);
+    const k = newestById(read(P.coverage), 'at').get(id);
+    const p = asPosting(c, null, salaryOf);
+    return send(200, 'application/json', JSON.stringify(detailOf({
+      description: tidy(c.description ?? ''),
+      requirements: k?.requirements ?? [],
+      why: f?.why ?? null,
+      concerns: f?.concerns ?? [],
+      gaps: k?.gaps ?? [],
+      constraints: k?.constraints ?? [],
+      applyUrl: p.applyUrl, jobUrl: p.jobUrl,
+      department: p.department, team: p.team,
+      workplaceType: p.workplaceType, employmentType: p.employmentType,
+      judgedAt: f?.scoredAt ?? null, fitnessModel: f?.model ?? null,
     })));
   }
 

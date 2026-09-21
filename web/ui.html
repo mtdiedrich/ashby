@@ -204,35 +204,6 @@ function render() {
     const cov = j.coverage == null ? '—'
       : j.coverage.toFixed(2) + '<span class="sub">' + j.met + '/' + j.reqTotal + '</span>';
 
-    const fitPane = j.fitness == null
-      ? '<p class="meta">Not judged yet — send it to the scorers, then run <b>node fitness.js</b>.</p>'
-      : '<p class="why">' + esc(j.why) + '</p>' +
-        (j.concerns.length ? '<ul class="concerns">' + j.concerns.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>' : '');
-
-    const covPane = j.coverage == null
-      ? '<p class="meta">No requirement breakdown yet — run <b>node coverage.js</b>.</p>'
-      : '<ul class="reqs">' + j.requirements.filter(r => r.kind !== 'logistics').map(r =>
-          '<li><b class="r' + r.score + '">' + r.score + '/3</b><span>' + esc(r.text) +
-          '<span class="ev">' + esc(r.evidence) + '</span></span></li>').join('') + '</ul>' +
-        (j.constraints.length
-          ? '<p class="meta" style="margin-top:10px">check yourself: ' + j.constraints.map(esc).join('; ') + '</p>'
-          : '');
-
-    const act = j.state === 'applied'
-      ? '<span class="meta">submitted</span>'
-      : j.state === 'opened'
-        ? '<span class="meta">opened in apply.js, not submitted</span>'
-      : j.state === 'queued'
-        ? '<button class="act drop" data-q="0">remove from queue</button>'
-        : '<button class="act primary" data-q="1">queue for application</button>';
-    const dismissBtn = j.state === 'dismissed'
-      ? '<button class="act" data-dismiss="0">un-dismiss</button>'
-      : '<button class="act" data-dismiss="1">not interested</button>';
-    const stageBtn = j.state === 'staged'
-      ? '<span class="meta">staged for the next scorer run</span>'
-      : (j.fitness == null || j.coverage == null)
-        ? '<button class="act" data-stage="1">send to scorers</button>' : '';
-
     return '<tr class="r" data-id="' + esc(j.id) + '">' +
         '<td class="num ' + cls(j.fitness) + '">' + num(j.fitness) + '</td>' +
         '<td class="num ' + cls(j.coverage) + '">' + cov + '</td>' +
@@ -251,26 +222,83 @@ function render() {
         '<td class="loc">' + esc(j.location || '?') + '</td>' +
         '<td class="pay' + (j.pay ? ' has' : '') + '">' + esc(j.pay || '—') + '</td>' +
       '</tr>' +
-      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="11">' +
-        '<div class="panes">' +
-          '<div class="pane">' +
-            '<h4>Fitness — should I apply</h4>' + fitPane +
-            '<h4>Coverage — what I can demonstrate</h4>' + covPane +
-            '<div class="acts">' + act + stageBtn + dismissBtn +
-              (j.applyUrl ? '<a class="lnk" href="' + esc(j.applyUrl) + '" target="_blank" rel="noopener">application ↗</a>' : '') +
-              (j.jobUrl ? '<a class="lnk" href="' + esc(j.jobUrl) + '" target="_blank" rel="noopener">posting ↗</a>' : '') +
-            '</div>' +
-            '<div class="acts"><span class="meta">' + esc(j.department || '?') + ' / ' + esc(j.team || '?') +
-              ' · ' + esc(j.workplaceType || '?') + ' · ' + esc(j.employmentType || '?') +
-              (j.judgedAt ? ' · judged ' + esc(j.judgedAt.slice(0, 10)) + ' by ' + esc(j.fitnessModel || '?') : '') +
-            '</span></div>' +
-          '</div>' +
-          '<div class="pane"><h4>Job description</h4>' +
-            '<div class="desc">' + esc(j.description || '(not stored)') + '</div>' +
-          '</div>' +
-        '</div>' +
-      '</td></tr>';
+      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="11"></td></tr>';
   }).join('');
+}
+
+/*
+ * The expanded pane, built when a row is opened rather than for all 600 rows on
+ * every render. It used to carry a full job description and requirement list per
+ * row, hidden behind CSS — 5.1 MB of a 5.8 MB board response, rebuilt as HTML on
+ * every keystroke in the search box.
+ */
+function paneHtml(j, d) {
+  const fitPane = j.fitness == null
+    ? '<p class="meta">Not judged yet — send it to the scorers, then run <b>npm run fitness</b>.</p>'
+    : '<p class="why">' + esc(d.why) + '</p>' +
+      (d.concerns.length ? '<ul class="concerns">' + d.concerns.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>' : '');
+
+  const covPane = j.coverage == null
+    ? '<p class="meta">No requirement breakdown yet — run <b>npm run coverage</b>.</p>'
+    : '<ul class="reqs">' + d.requirements.filter(r => r.kind !== 'logistics').map(r =>
+        '<li><b class="r' + r.score + '">' + r.score + '/3</b><span>' + esc(r.text) +
+        '<span class="ev">' + esc(r.evidence) + '</span></span></li>').join('') + '</ul>' +
+      (d.constraints.length
+        ? '<p class="meta" style="margin-top:10px">check yourself: ' + d.constraints.map(esc).join('; ') + '</p>'
+        : '');
+
+  const act = j.state === 'applied'
+    ? '<span class="meta">submitted</span>'
+    : j.state === 'opened'
+      ? '<span class="meta">opened in apply.js, not submitted</span>'
+    : j.state === 'queued'
+      ? '<button class="act drop" data-q="0">remove from queue</button>'
+      : '<button class="act primary" data-q="1">queue for application</button>';
+  const dismissBtn = j.state === 'dismissed'
+    ? '<button class="act" data-dismiss="0">un-dismiss</button>'
+    : '<button class="act" data-dismiss="1">not interested</button>';
+  const stageBtn = j.state === 'staged'
+    ? '<span class="meta">staged for the next scorer run</span>'
+    : (j.fitness == null || j.coverage == null)
+      ? '<button class="act" data-stage="1">send to scorers</button>' : '';
+
+  return '<div class="panes">' +
+      '<div class="pane">' +
+        '<h4>Fitness — should I apply</h4>' + fitPane +
+        '<h4>Coverage — what I can demonstrate</h4>' + covPane +
+        '<div class="acts">' + act + stageBtn + dismissBtn +
+          (d.applyUrl ? '<a class="lnk" href="' + esc(d.applyUrl) + '" target="_blank" rel="noopener">application ↗</a>' : '') +
+          (d.jobUrl ? '<a class="lnk" href="' + esc(d.jobUrl) + '" target="_blank" rel="noopener">posting ↗</a>' : '') +
+        '</div>' +
+        '<div class="acts"><span class="meta">' + esc(d.department || '?') + ' / ' + esc(d.team || '?') +
+          ' · ' + esc(d.workplaceType || '?') + ' · ' + esc(d.employmentType || '?') +
+          (d.judgedAt ? ' · judged ' + esc(d.judgedAt.slice(0, 10)) + ' by ' + esc(d.fitnessModel || '?') : '') +
+        '</span></div>' +
+      '</div>' +
+      '<div class="pane"><h4>Job description</h4>' +
+        '<div class="desc">' + esc(d.description || '(not stored)') + '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+// Detail is fetched once per posting and kept, so collapsing and re-expanding a row
+// costs nothing.
+const detailCache = new Map();
+async function fillPane(id) {
+  const cell = document.querySelector('tr.detail[data-for="' + CSS.escape(id) + '"] td');
+  if (!cell || cell.dataset.filled === '1') return;
+  const j = JOBS.find(r => r.id === id);
+  if (!j) return;
+  cell.innerHTML = '<p class="meta">loading…</p>';
+  try {
+    if (!detailCache.has(id)) {
+      detailCache.set(id, await (await fetch('/api/detail?id=' + encodeURIComponent(id))).json());
+    }
+    cell.innerHTML = paneHtml(j, detailCache.get(id));
+    cell.dataset.filled = '1';
+  } catch {
+    cell.innerHTML = '<p class="meta">could not load this posting\'s detail</p>';
+  }
 }
 
 document.getElementById('rows').addEventListener('click', async (e) => {
@@ -302,7 +330,9 @@ document.getElementById('rows').addEventListener('click', async (e) => {
   const r = e.target.closest('tr.r');
   if (!r) return;
   r.classList.toggle('open');
-  document.querySelector('tr.detail[data-for="' + CSS.escape(r.dataset.id) + '"]')?.classList.toggle('open');
+  const d = document.querySelector('tr.detail[data-for="' + CSS.escape(r.dataset.id) + '"]');
+  d?.classList.toggle('open');
+  if (d?.classList.contains('open')) fillPane(r.dataset.id);
 });
 
 for (const th of document.querySelectorAll('thead th[data-s]')) {
@@ -327,7 +357,14 @@ for (const t of document.querySelectorAll('.tab[data-f]')) {
     load();
   });
 }
-document.getElementById('q').addEventListener('input', e => { term = e.target.value.toLowerCase().trim(); render(); });
+// Debounced. render() rebuilds the whole table, and calling it synchronously on
+// every keystroke is what made typing in this box feel like the machine had stalled.
+let typingTimer = null;
+document.getElementById('q').addEventListener('input', e => {
+  term = e.target.value.toLowerCase().trim();
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(render, 120);
+});
 document.getElementById('refresh').addEventListener('click', load);
 document.getElementById('stagetop').addEventListener('click', async (e) => {
   e.target.disabled = true; e.target.textContent = 'staging…';

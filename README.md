@@ -240,6 +240,21 @@ Batch ids go to `data/batches.jsonl` the moment they exist, because the batch bi
 whether or not the run is still watching it. `coverage --batch` submits two batches,
 not one: pass 2 scores what pass 1 extracted, so they stay sequential.
 
+### The board stays responsive
+
+The table ships only what a row draws — 0.2 MB for 600 rows. Descriptions and
+requirement evidence are fetched per posting when you expand it, and kept, so
+collapsing and re-expanding costs nothing.
+
+That was 5.8 MB before, all of it rebuilt as HTML on every keystroke in the filter
+box, including 600 detail panes hidden behind CSS. Typing was unusable. The filter is
+also debounced now, and `corpus.jsonl` is cached on mtime rather than re-parsed per
+request — 246,000 postings is about 1.5 seconds a parse, and it was paying that on
+every board load *and* every row you opened.
+
+Measured after: 8 keystrokes block the main thread for 0 ms; `/api/detail` returns in
+under 100 ms.
+
 ### What a run costs
 
 ```powershell

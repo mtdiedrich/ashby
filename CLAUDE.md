@@ -215,6 +215,19 @@ descriptions only for titles `wantedTitle` passes; anything else is marked
 never the same as a missing one, and scoring a blank produces a confident number about
 nothing. Measured: 96.5% of a 380 MB corpus was descriptions that would never be read.
 
+## The board
+
+`web/ui.html` renders every row on each keystroke, so what rides on a row matters.
+
+- **A board row carries only what a column draws.** `summaryOf`/`detailOf` in
+  `lib/board-row.js` split it; the expanded pane fetches `/api/detail` per posting.
+  Shipping descriptions and requirement evidence with every row made one response
+  5.8 MB and made typing in the filter box unusable.
+- **The filter input is debounced.** `render()` rebuilds the whole table.
+- **`corpus()` is cached on mtime in ui.js (`corpusCached`).** 246,000 postings is
+  ~1.5s a parse and it was being paid on every request, including every row expand.
+  Anything added to a request path must go through the cache, not `corpus()`.
+
 ## Concurrency
 
 Scoring passes run through `pool()` in `lib/pool.js`, not a bare `for await` loop.
