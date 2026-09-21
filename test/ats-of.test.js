@@ -40,3 +40,28 @@ test('the word greenhouse in a slug is not the ats', () => {
   assert.equal(atsOf({ slug: 'greenhouse-software', id: 'abc-def' }), 'ashby');
   assert.equal(atsOf({ applyUrl: 'https://jobs.ashbyhq.com/greenhouse/xyz' }), 'ashby');
 });
+
+// ---- the two selectors apply.js drives the page with ---------------------
+//
+// apply.js waits for the form to render and then targets the resume input. Both
+// were hardcoded to Ashby's DOM, which is what produced a 30s timeout on
+// [data-field-path] for a Greenhouse posting. Kept in lib/ats.js with the rest of
+// the board-specific knowledge, so nothing else has to branch on the ATS.
+import { formSelectors } from '../lib/ats.js';
+
+test('ashby waits for its field entries and targets the resume field path', () => {
+  const s = formSelectors('ashby');
+  assert.equal(s.ready, '[data-field-path]');
+  assert.match(s.resume, /_systemfield_resume/);
+});
+
+test('greenhouse waits for its form and targets the resume input by id', () => {
+  const s = formSelectors('greenhouse');
+  assert.equal(s.ready, '#application-form');
+  assert.equal(s.resume, '#application-form input[type=file]#resume');
+});
+
+test('an unknown ats falls back to ashby rather than returning nothing', () => {
+  assert.deepEqual(formSelectors('lever'), formSelectors('ashby'));
+  assert.deepEqual(formSelectors(undefined), formSelectors('ashby'));
+});

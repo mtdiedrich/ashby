@@ -167,3 +167,76 @@ test('greenhouse non-demographic questions on the same form are not', () => {
     assert.equal(isDemographic(label), false, `should NOT be demographic: ${label}`);
   }
 });
+
+// ---- the model is never offered a self-identification field --------------
+//
+// Until now this held by accident rather than by construction. fillDecline() always
+// succeeded on Ashby, because a radio group carries its options in the DOM, so a
+// demographic field was never still empty by the time pending() ran. On Greenhouse
+// the same fields are react-select comboboxes whose options do not exist until the
+// menu is opened; the decline failed, the field stayed empty, and it went to the
+// model — which could have answered "Male" or "I am not a protected veteran".
+//
+// fillDecline() is the ONLY thing allowed to touch these, and it can only ever
+// select an option that says decline. Everything else leaves them empty, because a
+// gap is better than an answer the candidate did not choose. Enforced in two
+// places, so a failure in one is not a failure of the property.
+const fillSrc = fs.readFileSync(new URL('../lib/fill.browser.js', import.meta.url), 'utf8');
+
+const bodyOf = (name) => {
+  const start = fillSrc.indexOf(`async function ${name}(`);
+  assert.notEqual(start, -1, `${name} not found in fill.browser.js`);
+  const end = fillSrc.indexOf('\n  }', start);
+  return fillSrc.slice(start, end);
+};
+
+test('pending() withholds self-identification fields from the model', () => {
+  assert.match(bodyOf('pending'), /isDemographic\(/,
+    'pending() must consult isDemographic before describing a field for the model');
+});
+
+test('applyPlan() refuses to act on a self-identification field', () => {
+  assert.match(bodyOf('applyPlan'), /isDemographic\(/,
+    'applyPlan() must refuse a demographic step whatever the model asked for');
+});
+
+test('the decline matcher still rejects every assertive answer it has ever seen', () => {
+  // One consolidated guard over both boards' wording, so a future edit to DECLINE
+  // cannot quietly start asserting on the candidate's behalf.
+  const assertive = [
+    'I am not a protected veteran',
+    'I am not a protected Veteran',
+    'I identify as one or more of the classifications of a protected veteran',
+    'No, I do not have a disability and have not had one in the past',
+    'Yes, I have a disability, or have had one in the past',
+    'Male', 'Female', 'Man', 'Woman', 'White', 'Multiracial', 'Yes', 'No',
+  ];
+  for (const a of assertive) {
+    assert.equal(idx(a), -1, `must not treat as a decline: ${a}`);
+  }
+});
+
+// ---- one matcher, two call sites ----------------------------------------
+//
+// Greenhouse's demographic comboboxes ignore the synthesized pointer events
+// fill.browser.js dispatches in-page — verified against a live form, where the
+// menu never opened and every field reported "no decline option offered". Only
+// Playwright's trusted click opens them, which puts that one interaction outside
+// the page. lib/decline.js re-exports the real artifact's matchers rather than
+// letting a second list of decline wording exist.
+test('lib/decline.js exposes the same matcher the page uses', async () => {
+  const { declineIndex: nodeSide, isDemographic: nodeDemo } = await import('../lib/decline.js');
+  assert.equal(nodeSide('Male', 'Female', 'Decline To Self Identify') === undefined, false);
+  assert.equal(nodeSide(['Male', 'Female', 'Decline To Self Identify']), 2);
+  assert.equal(nodeSide(['I am not a protected veteran', "I don't wish to answer"]), 1);
+  assert.equal(nodeDemo('Veteran Status'), true);
+  assert.equal(nodeDemo('Where did you hear about this job?'), false);
+});
+
+test('apply.js declines through the shared matcher, not its own word list', () => {
+  const applySrc = fs.readFileSync(new URL('../bin/apply.js', import.meta.url), 'utf8');
+  assert.match(applySrc, /from '\.\.\/lib\/decline\.js'/,
+    'apply.js must import the shared matcher');
+  assert.doesNotMatch(applySrc, /decline to self identify/i,
+    'apply.js must not carry its own copy of the decline wording');
+});

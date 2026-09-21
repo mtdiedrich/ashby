@@ -188,8 +188,16 @@ to postings that have been scored rather than the whole vector store.
 
 Everything board-specific lives in `lib/ats.js` — endpoint, response shape,
 normalisation. Nothing else should branch on which ATS a posting came from, with two
-exceptions that are deliberate: `apply.js` refuses non-Ashby postings because
-`fill.browser.js` reads Ashby's DOM specifically, and the board shows which is which.
+exceptions that are deliberate: `apply.js` routes on the ATS because
+`fill.browser.js` carries a DOM adapter per board, and the board shows which is which.
+
+`apply.js` fills Ashby and Greenhouse. Which one is decided by `atsOf()` in
+`lib/ats.js`, never by reading `row.ats` directly — derived rows drop the field, and
+that is exactly how a Greenhouse posting once hung 30s on an Ashby selector.
+Greenhouse's react-select ignores synthesized pointer events, so its
+self-identification fields are declined from the Playwright side via
+`lib/decline.js`, which re-exports the page's own matcher so one DECLINE list serves
+both call sites. Never add a second copy of that wording.
 
 A record with no `ats` field is Ashby. Every one of the 62,000 rows written before
 this predates the field, and Ashby ids stay unprefixed for the same reason —

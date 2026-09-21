@@ -492,10 +492,26 @@ So a Greenhouse posting almost always shows no pay. That is the board being hone
 rather than a bug: the hard pay filter passes anything unstated, and the salary ask
 falls back to your `me.json` figure with no floor to clear.
 
-**`apply` only fills Ashby forms.** `lib/fill.browser.js` reads Ashby's DOM
-specifically, and a Greenhouse form has none of it — so `apply` says so and opens
-nothing rather than producing a page of red. Greenhouse ones you fill yourself; the
-board marks which is which.
+**`apply` fills both boards.** `lib/fill.browser.js` detects which one it is on and
+reads the matching DOM — Ashby's `[data-field-path]` entries, or Greenhouse's
+`#application-form` with its `.field-wrapper`, `.select__container` and `.file-upload`
+containers. Anything else is still refused and opened not at all, rather than
+producing a page of red.
+
+Which board a posting belongs to is decided by `atsOf()`, which prefers the record's
+own `ats` field and otherwise infers from the `greenhouse:` id prefix and the board
+host. It has to infer, because the queued row is the *fitness* row and fitness did not
+always carry the field — which is how a Greenhouse posting once spent 30 seconds
+waiting for an Ashby selector before failing.
+
+**One Greenhouse limitation.** Its comboboxes are react-select, which ignores the
+synthesized pointer events the in-page filler dispatches. Self-identification is
+handled from outside the page with a trusted click, so gender, ethnicity, veteran and
+disability are declined properly. Other Greenhouse comboboxes — country, "are you
+authorized to work", and similar — cannot be filled in-page and are reported as *not
+applied* rather than claimed. Every fill now verifies itself and fails if the field is
+still empty afterwards, because a rule that reports success without effect is worse
+than one that fails.
 
 ### What the corpus stores
 

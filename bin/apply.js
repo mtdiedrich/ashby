@@ -12,7 +12,65 @@
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
-import { atsOf } from '../lib/ats.js';
+import { atsOf, formSelectors } from '../lib/ats.js';
+import { declineIndex, isDemographic } from '../lib/decline.js';
+
+// The boards fill.browser.js has a DOM adapter for.
+const FILLABLE = new Set(['ashby', 'greenhouse']);
+
+/**
+ * Decline Greenhouse's self-identification fields, from outside the page.
+ *
+ * These are react-select comboboxes, and react-select does not respond to the
+ * synthesized pointer events fill.browser.js dispatches in-page — verified against a
+ * live form, where the menu stayed shut, every field reported "no decline option
+ * offered", and the four questions were left blank. Only a trusted click opens them,
+ * and only Playwright can produce one.
+ *
+ * The matcher is the shared one, so there is exactly one definition of what counts
+ * as declining. It requires an explicit verb of declining, which is what stops it
+ * selecting "I am not a protected veteran" or "No, I do not have a disability" —
+ * both of which would be this tool asserting something about the candidate.
+ *
+ * A field offering no way to decline is closed again and left EMPTY. A gap is the
+ * correct outcome there; it is never filled with the nearest thing.
+ */
+async function declineDemographics(page) {
+  const out = [];
+  const combos = page.locator('#application-form input[role=combobox]');
+  const n = await combos.count();
+
+  for (let i = 0; i < n; i++) {
+    const combo = combos.nth(i);
+    const id = await combo.getAttribute('id');
+    if (!id) continue;
+    const label = (await page.locator(`label[for="${id}"]`).first().textContent()
+      .catch(() => null))?.replace(/\s*\*\s*$/, '').trim() ?? '';
+    if (!isDemographic(label)) continue;
+    if ((await combo.inputValue().catch(() => '')).trim()) continue;
+
+    try {
+      await combo.scrollIntoViewIfNeeded();
+      await combo.click({ timeout: 5000 });
+      const options = page.locator(`#react-select-${id}-listbox [role="option"]`);
+      await options.first().waitFor({ state: 'visible', timeout: 5000 });
+      const texts = await options.allTextContents();
+      const k = declineIndex(texts.map(t => t.trim()));
+      if (k < 0) {
+        await page.keyboard.press('Escape');
+        out.push({ label, ok: false, err: 'no decline option offered — left empty' });
+        continue;
+      }
+      await options.nth(k).click({ timeout: 5000 });
+      out.push({ label, ok: true, value: texts[k].trim() });
+    } catch (e) {
+      await page.keyboard.press('Escape').catch(() => {});
+      out.push({ label, ok: false, err: String(e.message).split(String.fromCharCode(10))[0] });
+    }
+  }
+  return out;
+}
+
 import readline from 'node:readline';
 import { chromium } from 'playwright';
 import { z } from 'zod';
@@ -120,17 +178,19 @@ for (const [i, job] of queue.entries()) {
 
   console.log(`\n${'─'.repeat(70)}\n[${i + 1}/${queue.length}] ${job.title} — ${job.slug}\n${url}`);
 
-  // lib/fill.browser.js reads Ashby's form DOM specifically — [data-field-path] and
-  // the ashby-application-form-* classes. A Greenhouse form has none of them, so
-  // every rule would miss and the model would be handed an empty field list. Say so
-  // and open nothing, rather than produce a page of red and call it a result.
+  // lib/fill.browser.js now reads both boards: Ashby via [data-field-path] and the
+  // ashby-application-form-* classes, Greenhouse via #application-form and its
+  // .field-wrapper / .select__container / .file-upload containers. Anything else
+  // would hand the model an empty field list, so it is still refused rather than
+  // opened to produce a page of red and call it a result.
+  //
   // Not `job.ats ?? 'ashby'`: the queued row is the FITNESS row, and rowsFrom()
   // never copied `ats`, so every Greenhouse posting read as Ashby here and hung 30s
   // on [data-field-path]. atsOf() infers from the id prefix and the board host, so
   // rows already on disk without the field route correctly too.
   const ats = atsOf(job);
-  if (ats !== 'ashby') {
-    console.log(`  ${ats} form — apply.js only fills Ashby's. Open it yourself.`);
+  if (!FILLABLE.has(ats)) {
+    console.log(`  ${ats} form — apply.js fills ${[...FILLABLE].join(' and ')}. Open it yourself.`);
     continue;
   }
 
@@ -141,11 +201,12 @@ for (const [i, job] of queue.entries()) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     // networkidle never fires on some Ashby pages (analytics beacons keep the
     // connection warm), so wait for the form itself.
-    await page.waitForSelector('[data-field-path]', { timeout: 30_000 });
+    const sel = formSelectors(ats);
+    await page.waitForSelector(sel.ready, { timeout: 30_000 });
 
     // Resume upload. Target the resume entry specifically — pages can have a
     // second file input for a cover letter, and the bare selector picks the wrong one.
-    const resumeInput = page.locator('[data-field-path="_systemfield_resume"] input[type=file]').first();
+    const resumeInput = page.locator(sel.resume).first();
     if (await resumeInput.count()) {
       await resumeInput.setInputFiles(resumeFile());
       // Ashby parses the resume server-side and backfills name/email on SOME boards.
@@ -156,14 +217,19 @@ for (const [i, job] of queue.entries()) {
       // This was a 15s timeout, and on a board that never backfills it burned all 15
       // every time: measured at 15,002ms of a 20,337ms startup, 74% of the wait
       // before the model was even called. Boards that do backfill do it in ~1s.
+      // Ashby only. Greenhouse does not backfill the form from the uploaded resume
+      // at all, so there is nothing to race and waiting burns RESUME_PARSE_MS for a
+      // message naming the wrong board.
       const waited = Date.now();
-      const backfilled = await page.waitForFunction(
+      const backfilled = ats !== 'ashby' ? false : await page.waitForFunction(
         () => document.querySelector('[data-field-path="_systemfield_name"] input')?.value?.trim(),
         null, { timeout: RESUME_PARSE_MS },
       ).then(() => true).catch(() => false);
-      console.log(backfilled
-        ? `  resume parsed by Ashby in ${Date.now() - waited}ms`
-        : `  (Ashby did not autofill from the resume — using me.json)`);
+      if (ats === 'ashby') {
+        console.log(backfilled
+          ? `  resume parsed by Ashby in ${Date.now() - waited}ms`
+          : `  (Ashby did not autofill from the resume — using me.json)`);
+      }
       record.resumeUploaded = true;
       record.resumeBackfill = backfilled;
     } else {
@@ -175,6 +241,20 @@ for (const [i, job] of queue.entries()) {
     // whether the stated ask would land below what the employer already budgeted.
     await page.evaluate(([me, posting]) => window.__ashby.configure(me, posting),
       [ME, { employmentType: job.employmentType, salary: job.salary ?? null }]);
+
+    // Greenhouse only, and BEFORE the rule pass: the in-page decline cannot open a
+    // react-select menu, so it is done from here with a trusted click. Running it
+    // first leaves those fields non-empty, so the rule pass skips them instead of
+    // trying, failing, and reporting four rules "not applied" that were in fact
+    // already handled. Ashby's are radio groups the rule pass fills by itself.
+    if (ats === 'greenhouse') {
+      record.declined = await declineDemographics(page);
+      for (const d of record.declined) {
+        console.log(d.ok
+          ? `  declined: ${d.label} -> ${d.value}`
+          : `  left empty: ${d.label} (${d.err})`);
+      }
+    }
 
     record.ruleResults = await page.evaluate(() => window.__ashby.fill());
     const ruleOk = record.ruleResults.filter(r => r.ok).length;
