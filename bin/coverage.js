@@ -40,6 +40,7 @@ import { resumeText } from '../lib/resume-text.js';
 import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
 import { isAuthError } from '../lib/keys.js';
+import { planCoverage, MAX_EXTRACT_ATTEMPTS } from '../lib/coverage-plan.js';
 
 const argv    = process.argv.slice(2);
 const DRY     = argv.includes('--dry');
@@ -136,8 +137,13 @@ ${resume}
 const jobs = read(P.fresh).slice(0, LIMIT);
 if (!jobs.length && !SHOW) { console.log('fresh.jsonl is empty — run: npm run poll'); process.exit(0); }
 
-const reqCache = newestBy(read(P.requirements), 'jdHash');
+const reqRows  = read(P.requirements);
+const reqCache = newestBy(reqRows, 'jdHash');
 const covCache = newestBy(read(P.coverage), 'key');
+// How many times each posting's requirements have been extracted. An extraction
+// that keeps coming back empty is the posting, not the model — see planCoverage.
+const attempts = new Map();
+for (const r of reqRows) attempts.set(r.jdHash, (attempts.get(r.jdHash) ?? 0) + 1);
 
 if (SHOW) {
   const rows = [...covCache.values()].sort((a, b) => b.coverage - a.coverage);
@@ -160,15 +166,36 @@ const work = jobs.map(j => {
   return { j, jdHash, key: `${jdHash}:${resumeHash}` };
 });
 
-const needExtract = work.filter(w => FORCE || !reqCache.has(w.jdHash));
-const needScore   = work.filter(w => FORCE || !covCache.has(w.key));
+const plan = planCoverage({ work, reqCache, covCache, attempts, force: FORCE });
+const { needExtract, needScore, reuse, unextractable } = plan;
 
 console.log(`${jobs.length} postings in fresh.jsonl`);
 console.log(`  requirements to extract: ${needExtract.length}  (${work.length - needExtract.length} cached)`);
-console.log(`  fitness to score:        ${needScore.length}  (${work.length - needScore.length} cached)`);
+console.log(`  coverage to score:       ${needScore.length}  (${work.length - needScore.length} cached)`);
+if (reuse.length) console.log(`  re-listed, copied free:  ${reuse.length}`);
+if (unextractable.length) {
+  console.log(`  no requirements to find:  ${unextractable.length}  (given up on, not retried)`);
+  for (const w of unextractable.slice(0, 5)) console.log(`      ${w.j.title} — ${w.j.slug}`);
+  if (unextractable.length > 5) console.log(`      … and ${unextractable.length - 5} more`);
+}
 console.log(`  extractor: ${EXTRACTOR} · scorer: ${SCORER}`);
 
 if (DRY) { console.log('\n--dry, nothing called'); process.exit(0); }
+
+// Re-listed postings: same description, new id. The cached assessment is still
+// valid, so it is copied to the new id rather than paid for again. This costs
+// nothing and calls nothing, and it happens before the "nothing to do" exit below,
+// because a run whose only work is this still has work. Until this existed those
+// postings could never satisfy finished(), so poll re-staged them every run.
+if (reuse.length) {
+  fs.appendFileSync(P.coverage, reuse.map(r => JSON.stringify(r)).join('\n') + '\n');
+  console.log(`\n${reuse.length} re-listed posting${reuse.length === 1 ? '' : 's'} ` +
+              `copied to their new ids, no calls made`);
+  for (const r of reuse.slice(0, 5)) {
+    console.log(`  ${r.coverage.toFixed(2)}  ${r.title.slice(0, 46).padEnd(47)}${r.slug}`);
+  }
+  if (reuse.length > 5) console.log(`  … and ${reuse.length - 5} more`);
+}
 
 // Once, before any work. A bad key is the same answer for all 1,396 postings, and
 // discovering that per posting produced 1,396 identical lines and a full progress bar.
@@ -287,11 +314,28 @@ function rowFrom(w, reqs, scores) {
   };
 }
 
-const scBar = needScore.length ? progress(needScore.length, 'coverage') : null;
+// Recomputed AFTER pass 1, because pass 1 is what fills reqCache. A posting with no
+// requirements cannot be scored against anything — named here rather than dropped
+// inside a filter, which is how one posting sat unscorable and invisible for days:
+// it was skipped by pass 1 (its jdHash WAS cached, just with an empty array) and
+// filtered out of pass 2, so it never finished and never retried.
+const { scorable, unscorable } = planCoverage({ work: needScore, reqCache, covCache: new Map() });
+// The ones already named above as out of retries are not news twice.
+const givenUp = new Set(unextractable.map(w => w.jdHash));
+const freshlyEmpty = unscorable.filter(w => !givenUp.has(w.jdHash));
+if (freshlyEmpty.length) {
+  console.warn(`\n  ! ${freshlyEmpty.length} posting${freshlyEmpty.length === 1 ? '' : 's'} ` +
+               `produced no requirements and cannot be scored:`);
+  for (const w of freshlyEmpty.slice(0, 5)) console.warn(`      ${w.j.title} — ${w.j.slug}`);
+  if (freshlyEmpty.length > 5) console.warn(`      … and ${freshlyEmpty.length - 5} more`);
+  console.warn(`    retried up to ${MAX_EXTRACT_ATTEMPTS}x, then left alone`);
+}
 
-if (USE_BATCH && needScore.length) {
+const scBar = scorable.length ? progress(scorable.length, 'coverage') : null;
+
+if (USE_BATCH && scorable.length) {
   // Only postings pass 1 produced requirements for — the rest have nothing to score.
-  const todo = needScore.filter(w => reqCache.get(w.jdHash)?.requirements?.length);
+  const todo = scorable;
   // Named `batched`, not `results` — `results` is the module-scope accumulator the
   // report reads, and shadowing it here threw on the temporal dead zone *after* the
   // batch had been submitted and billed. Twice.
@@ -309,10 +353,9 @@ if (USE_BATCH && needScore.length) {
     results.push(row);
   }
 } else {
-const scored = await pool(needScore, async (w) => {
-  const reqs = reqCache.get(w.jdHash)?.requirements;
-  // Nothing extracted for this posting, so there is nothing to score against.
-  if (!reqs?.length) return null;
+const scored = await pool(scorable, async (w) => {
+  // scorable is filtered on exactly this, so reqs is present by construction.
+  const reqs = reqCache.get(w.jdHash).requirements;
 
   const { scores } = await ask(
     SCORE_SYSTEM, `<role>${w.j.title} at ${w.j.slug}</role>\n<requirements>\n` +
@@ -379,7 +422,7 @@ if (scored.stopped) {
   process.exit(1);
 }
 for (const [k, r] of scored.entries()) {
-  if (!r.ok) console.warn(`  ! ${needScore[k].j.title}: ${r.error.message}`);
+  if (!r.ok) console.warn(`  ! ${scorable[k].j.title}: ${r.error.message}`);
 }
 
 }   // end of the synchronous scoring path

@@ -268,6 +268,42 @@ every board load *and* every row you opened.
 Measured after: 8 keystrokes block the main thread for 0 ms; `/api/detail` returns in
 under 100 ms.
 
+### A posting that cannot finish
+
+A posting is only *finished* once it has all three scores, and `poll` re-stages
+anything that isn't — so a posting that can never acquire one of them is re-staged on
+every single run, forever. Two ways that used to happen, both fixed in
+`lib/coverage-plan.js`:
+
+**Re-listed postings.** Coverage caches by content — a hash of title, slug, location
+and description, paired with the resume hash — but stamps each row with the posting
+id, and `finished()` looks rows up *by id*. When a company deletes and re-posts a job
+the description is byte-identical, so coverage says "already scored" and skips it,
+while everything downstream sees no row at all. The cached assessment is still valid,
+so it is now copied to the new id and the run says so:
+
+```
+4 re-listed postings copied to their new ids, no calls made
+  0.58  Software Engineer II, Machine Learning         poshmark
+  0.52  Staff Machine Learning Engineer(Platform - Ide coinbase
+```
+
+**Postings with nothing to extract.** Some job descriptions genuinely contain no
+checkable requirements — Twilio published a "Machine Learning Engineer L2" that was an
+unfilled internal template, responsibilities and all (*"Begin each bullet with an
+action-oriented verb"*, five times). An empty extraction used to be cached like any
+other, which put the posting in neither pass: pass 1 skipped it because the hash was
+present, pass 2 filtered it out because there was nothing to score. It is now retried
+twice — an empty result can also just be a failed call — and then left alone and named:
+
+```
+  no requirements to find:  1  (given up on, not retried)
+      Machine Learning Engineer L2 — twilio
+```
+
+Such a posting still won't finish, because there is nothing honest to score it on, but
+it no longer costs anything per run. Dismiss it from the board if you want it gone.
+
 ### How hard the model works: `--effort` and `--think`
 
 ```powershell
