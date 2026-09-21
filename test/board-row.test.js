@@ -68,3 +68,21 @@ test('nullish input does not throw', () => {
   assert.equal(summaryOf(null).id, undefined);
   assert.deepEqual(detailOf(null).requirements, []);
 });
+
+// The similarity column showed the raw centred cosine (~0.10–0.25) while fitness and
+// coverage showed 0–1, so the three columns could not be read against each other.
+// The normalised value is what `score` already uses.
+test('the summary carries the normalised similarity', () => {
+  const s = summaryOf({ ...row(), nSimilarity: 0.62 });
+  assert.equal(s.nSimilarity, 0.62);
+});
+
+test('nSimilarity is null when there is nothing to normalise', () => {
+  const s = summaryOf({ id: 'a' });
+  assert.equal(s.nSimilarity, null, 'missing must be null, not undefined');
+});
+
+test('the raw similarity is still carried, for the tooltip', () => {
+  const s = summaryOf({ ...row(), nSimilarity: 0.62 });
+  assert.equal(s.similarity, 0.4);
+});

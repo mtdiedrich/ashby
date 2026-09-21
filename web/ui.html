@@ -125,7 +125,7 @@
     <tr>
       <th data-s="fitness">fitness <span class="caret">▾</span></th>
       <th data-s="coverage">coverage <span class="caret">▾</span></th>
-      <th data-s="similarity">similarity <span class="caret">▾</span></th>
+      <th data-s="nSimilarity" title="Cosine similarity to your resume, min-maxed across the rows shown — the same scaled value `score` uses. Hover a cell for the raw cosine.">similarity <span class="caret">▾</span></th>
       <th data-s="score" title="Geometric mean of the three scores, each min-maxed across the rows shown. One weak score drags it down — a posting has to be decent on all three. Blank until all three exist.">score <span class="caret">▾</span></th>
       <th data-s="fresh" title="How much of its value the posting still has. Halves every 7 days: listed today 1.00, a week old 0.50, a month 0.05.">fresh <span class="caret">▾</span></th>
       <th data-s="value" class="sorted" title="The average of score and fresh — how good the match is, and whether it is still worth chasing.">value <span class="caret">▾</span></th>
@@ -142,6 +142,14 @@
 
 <script>
 let JOBS = [], TOTAL = 0, term = "", sortKey = "value", sortDir = -1, limit = 5000;
+
+// Every row is fetched and sorted, but only this many are painted. 2,871 rows is
+// 48,000 DOM nodes and ~290ms of layout on every render — the browser stall. The cap
+// is applied AFTER sorting and filtering, so it only ever hides the tail of the list
+// you are already looking at. (Unlike the old server-side slice, which cut on a
+// different ordering than the page displayed and hid every fresh posting.)
+const PAINT_STEP = 300;
+let painted = PAINT_STEP;
 const opts = { us: true, remote: false, all: false, scored: false };
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -174,10 +182,15 @@ async function load() {
   document.getElementById('stamp').textContent =
     d.total + ' postings · ' + d.counts.fitness + ' fitness · ' + d.counts.coverage +
     ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.value + ' ranked · ' + d.counts.queued + ' queued · ' + d.counts.applied + ' submitted';
-  const more = document.getElementById('more');
-  more.hidden = JOBS.length >= TOTAL;
-  more.textContent = 'show more (' + JOBS.length + ' of ' + TOTAL + ')';
+  painted = PAINT_STEP;
   render();
+}
+
+/** Painting more is a re-render, not a refetch — every row is already here. */
+function updateMore(shown, matching) {
+  const more = document.getElementById('more');
+  more.hidden = shown >= matching;
+  more.textContent = 'show more (' + shown + ' of ' + matching + ')';
 }
 
 function visible() {
@@ -196,9 +209,13 @@ function visible() {
 }
 
 function render() {
-  const rows = visible();
+  const all = visible();
   const body = document.getElementById('rows');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="11" class="empty">nothing here</td></tr>'; return; }
+  if (!all.length) { body.innerHTML = '<tr><td colspan="11" class="empty">nothing here</td></tr>'; updateMore(0, 0); return; }
+
+  // Sorted and filtered over every row, then capped for painting.
+  const rows = all.slice(0, painted);
+  updateMore(rows.length, all.length);
 
   body.innerHTML = rows.map(j => {
     const cov = j.coverage == null ? '—'
@@ -207,8 +224,9 @@ function render() {
     return '<tr class="r" data-id="' + esc(j.id) + '">' +
         '<td class="num ' + cls(j.fitness) + '">' + num(j.fitness) + '</td>' +
         '<td class="num ' + cls(j.coverage) + '">' + cov + '</td>' +
-        '<td class="num ' + (j.similarity == null ? 'none' : '') + '">' +
-          (j.similarity == null ? '—' : j.similarity.toFixed(3)) + '</td>' +
+        '<td class="num ' + (j.nSimilarity == null ? 'none' : cls(j.nSimilarity)) + '"' +
+          (j.similarity == null ? '' : ' title="raw cosine ' + j.similarity.toFixed(3) + '"') + '>' +
+          (j.nSimilarity == null ? '—' : j.nSimilarity.toFixed(2)) + '</td>' +
         '<td class="num ' + (j.score == null ? 'none' : cls(j.score)) + '">' +
           (j.score == null ? '—' : j.score.toFixed(2)) + '</td>' +
         '<td class="num ' + (j.fresh == null ? 'none' : cls(j.fresh)) + '">' +
@@ -339,7 +357,7 @@ for (const th of document.querySelectorAll('thead th[data-s]')) {
   th.addEventListener('click', () => {
     const k = th.dataset.s;
     if (sortKey === k) sortDir = -sortDir;
-    else { sortKey = k; sortDir = ['fitness', 'coverage', 'similarity', 'score', 'fresh', 'value', 'payNum'].includes(k) ? -1 : 1; }
+    else { sortKey = k; sortDir = ['fitness', 'coverage', 'similarity', 'nSimilarity', 'score', 'fresh', 'value', 'payNum'].includes(k) ? -1 : 1; }
     for (const o of document.querySelectorAll('thead th')) o.classList.remove('sorted');
     th.classList.add('sorted');
     th.querySelector('.caret').textContent = sortDir === -1 ? '▾' : '▴';
@@ -363,7 +381,7 @@ let typingTimer = null;
 document.getElementById('q').addEventListener('input', e => {
   term = e.target.value.toLowerCase().trim();
   clearTimeout(typingTimer);
-  typingTimer = setTimeout(render, 120);
+  typingTimer = setTimeout(() => { painted = PAINT_STEP; render(); }, 120);
 });
 document.getElementById('refresh').addEventListener('click', load);
 document.getElementById('stagetop').addEventListener('click', async (e) => {
@@ -374,7 +392,7 @@ document.getElementById('stagetop').addEventListener('click', async (e) => {
   if (res.staged === 0) alert('Nothing left to stage — everything matching is already scored or staged.');
   await load();
 });
-document.getElementById('more').addEventListener('click', () => { limit += 1000; load(); });
+document.getElementById('more').addEventListener('click', () => { painted += PAINT_STEP; render(); });
 
 load();
 </script>

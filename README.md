@@ -246,6 +246,14 @@ The table ships only what a row draws — 0.2 MB for 600 rows. Descriptions and
 requirement evidence are fetched per posting when you expand it, and kept, so
 collapsing and re-expanding costs nothing.
 
+The similarity column shows the min-maxed value, the same one `score` uses — the raw
+centred cosine sits around 0.1–0.25 and could not be compared against fitness and
+coverage by eye. Hover a cell for the raw number.
+
+Every matching row is sent and sorted, but only 300 are painted at a time; "show more"
+paints another 300 without refetching. Painting all 2,871 was 48,000 DOM nodes and
+about 290ms of layout on every render.
+
 The board sends the whole filtered candidate set (~2,900 rows, under a megabyte) and
 orders it by `value`, the same column the page sorts on. It used to order by fitness
 and send the top 600, which silently dropped every posting under two days old —

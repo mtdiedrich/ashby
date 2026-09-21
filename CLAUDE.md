@@ -224,6 +224,16 @@ nothing. Measured: 96.5% of a 380 MB corpus was descriptions that would never be
   Shipping descriptions and requirement evidence with every row made one response
   5.8 MB and made typing in the filter box unusable.
 - **The filter input is debounced.** `render()` rebuilds the whole table.
+- **Every row is sent and sorted; only `PAINT_STEP` (300) are painted.** 2,871 rows is
+  48,000 DOM nodes and ~290ms of layout per render, which stalls the browser. The cap
+  is applied in `render()` **after** sorting and filtering, so it only hides the tail
+  of the list you are already looking at — unlike the old server-side slice, which cut
+  on a different ordering than the page displayed. "Show more" re-renders; it does not
+  refetch.
+- **The similarity column shows `nSimilarity`, not the raw cosine.** Raw is a centred
+  cosine around 0.1–0.25 and could not be read against fitness and coverage, which run
+  0–1. The scaled value is the one `score` already uses; the raw sits in the cell's
+  title attribute.
 - **The server orders by the same key the page does** — `byValue` in
   `lib/board-row.js`. It used to order by fitness and slice the top 600 while the
   page sorted what it got by `value`; every posting under two days old fell below
