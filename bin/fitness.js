@@ -3,6 +3,11 @@
 //   npm run fitness              judge anything in fresh.jsonl not judged before
 //   npm run fitness -- --dry     report what would be judged, call nothing
 //   npm run fitness -- --force   re-judge even what has been judged before
+//   npm run fitness -- --batch   send it through the Batch API at half price
+//
+// --batch is the same requests, asynchronously: results arrive within 24 hours
+// (usually well under one) instead of seconds, and every token costs 50% less,
+// cache reads included. Nothing waits on a scoring run.
 //
 // One of three scorers over the same worklist. It does not consume fresh.jsonl:
 // coverage.js reads it too, and truncating here used to leave coverage nothing to
@@ -14,7 +19,7 @@
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
 import { z } from 'zod';
-import { ask, context, MODEL, preflight } from '../lib/ai.js';
+import { ask, askBatch, parseBatchResult, context, MODEL, preflight } from '../lib/ai.js';
 import { resumeBlock } from '../lib/resume.js';
 import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
@@ -26,6 +31,7 @@ const BATCH = 8;
 const FORCE = process.argv.includes('--force');
 const DRY   = process.argv.includes('--dry');
 const JOBS  = jobsFlag(process.argv);
+const USE_BATCH = process.argv.includes('--batch');
 
 const readJsonl = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
@@ -107,6 +113,56 @@ ${(j.descriptionPlain || '(no description)').slice(0, 7000)}
 </posting>`;
 };
 
+// Shared by both paths, so a score looks the same however it was obtained.
+const rowsFrom = (results) => {
+  const rows = [];
+  for (const r of results) {
+    const j = jobs[r.index];
+    if (!j) { console.warn(`  ! model returned index ${r.index}, no such posting — dropped`); continue; }
+    rows.push({
+      ...r,
+      id: j.id, title: j.title, slug: j.slug,
+      location: j.location, salary: j.salary,
+      jobUrl: j.jobUrl, applyUrl: j.applyUrl,
+      scoredAt: new Date().toISOString(), model: MODEL,
+    });
+  }
+  return rows;
+};
+
+if (USE_BATCH) {
+  // One request per group of BATCH postings, built exactly as the sync path builds
+  // them, so the prompt and the cached prefix are identical either way.
+  const reqs = groups.map(i => ({
+    system: SYSTEM,
+    user: jobs.slice(i, i + BATCH).map((_, k) => describe(jobs[i + k], i + k)).join('\n\n'),
+  }));
+
+  const results = await askBatch(reqs, {
+    schema: Scored, maxTokens: 8000, documents: [RESUME],
+    label: 'fitness', itemsPer: BATCH, model: MODEL,
+    onProgress: (done) => bar.set(Math.min(done * BATCH, jobs.length)),
+  });
+  bar.finish();
+
+  let failed = 0;
+  for (const [gi, i] of groups.entries()) {
+    const parsed = parseBatchResult(results.get(gi), Scored);
+    if (!parsed.ok) {
+      const size = Math.min(BATCH, jobs.length - i);
+      console.warn(`  ! a group of ${size} failed: ${parsed.error}`);
+      failed += size;
+      continue;
+    }
+    // Written per group, for the same reason the sync path does: a run that stops
+    // part way keeps what it already paid for.
+    const rows = rowsFrom(parsed.value.results);
+    appendRows(P.fitness, rows);
+    out.push(...rows);
+  }
+  if (failed) console.warn(`  ${failed} postings were in groups that failed — re-run to retry them`);
+} else {
+
 const outcomes = await pool(groups, async (i) => {
   const batch = jobs.slice(i, i + BATCH);
   const want = batch.map((_, k) => i + k);
@@ -121,18 +177,7 @@ const outcomes = await pool(groups, async (i) => {
     return results;
   });
 
-  const rows = [];
-  for (const r of results) {
-    const j = jobs[r.index];
-    if (!j) { console.warn(`  ! model returned index ${r.index}, no such posting — dropped`); continue; }
-    rows.push({
-      ...r,
-      id: j.id, title: j.title, slug: j.slug,
-      location: j.location, salary: j.salary,
-      jobUrl: j.jobUrl, applyUrl: j.applyUrl,
-      scoredAt: new Date().toISOString(), model: MODEL,
-    });
-  }
+  const rows = rowsFrom(results);
   for (const ix of missing) {
     console.warn(`\n  ! no result for "${jobs[ix].title}" after a retry — not scored`);
   }
@@ -171,6 +216,8 @@ for (const [gi, o] of outcomes.entries()) {
   bar.tick(size);   // a failed batch never ticked itself
 }
 bar.finish();
+
+}   // end of the synchronous path
 
 const read = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))

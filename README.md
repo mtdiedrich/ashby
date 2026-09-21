@@ -172,8 +172,8 @@ sorted by variance, not by fit.
 |---|---|
 | `npm run poll` | Fetch every board into `corpus.jsonl`, rewrite `fresh.jsonl` with what still needs scoring. `--dry`, `--no-crawl`, `--all` (ignore title filter), `--anywhere` (ignore location), `--limit N`, `--jobs N` (boards fetched at once, default 12), `--ats ashby|greenhouse` (fetch just one), `--full` (store every description). |
 | `npm run score` | All three scorers over the worklist. |
-| `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`, `--jobs N` (requests at once, default 6). |
-| `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`, `--jobs N` (requests at once, default 6). |
+| `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`, `--jobs N` (requests at once, default 6), `--batch` (half price, see below). |
+| `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`, `--jobs N` (requests at once, default 6), `--batch` (half price, see below). |
 | `npm run similarity` | Embed the staged postings and the resume, so they have a similarity score. `--dry` prices it first, `--force` re-embeds regardless, `--corpus` embeds the whole corpus rather than just the worklist. |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run cost` | What the model calls have cost, by what spends it. `--last` (the most recent run), `--runs` (one line per run), `--batch` (the same totals at the Batch API's 50%). |
@@ -209,6 +209,36 @@ it refused are **red**:
   to anything on your behalf.
 - **Anything not answerable from `context.md`.** The model skips rather than guessing,
   because a plausible invented answer on a job application is worse than a gap.
+
+### Half price, with `--batch`
+
+```powershell
+npm run score -- --batch
+```
+
+The same requests, submitted to the Batch API instead of run as a concurrent pool.
+Every token costs 50% less, cache reads included, and nothing about the prompt
+changes — the request body is built by the same function either way, so the two paths
+cannot drift.
+
+Measured per posting, on real runs:
+
+| | synchronous | `--batch` | saving |
+|---|---|---|---|
+| fitness | $0.00801 | $0.00482 | 40% |
+| coverage — extract | $0.00339 | $0.00181 | 47% |
+| coverage — score | $0.00473 | $0.00224 | 53% |
+| **all three** | **$0.01614** | **$0.00886** | **45%** |
+
+Your 2,751-posting backlog: **$44 → $24.**
+
+The cost is latency. Results arrive within 24 hours rather than seconds — in practice
+these ran in one to two minutes. Nothing waits on a scoring run, so that is usually
+free; keep the synchronous path for a handful of postings you want back now.
+
+Batch ids go to `data/batches.jsonl` the moment they exist, because the batch bills
+whether or not the run is still watching it. `coverage --batch` submits two batches,
+not one: pass 2 scores what pass 1 extracted, so they stay sequential.
 
 ### What a run costs
 
@@ -552,6 +582,7 @@ work from any directory.
 | `dismissed.jsonl` | What you said no to. |
 | `log.jsonl` | One line per apply attempt: what filled, what failed, what was left red. |
 | `dead.txt` · `raw.txt` · `candidates.txt` | Slug harvesting: rejected, pending, and the shipped seed list. |
+| `batches.jsonl` | One line per submitted batch: id, label, model, count. Written before the first poll, because the batch bills whether or not the run is still watching it. |
 | `usage.jsonl` | One line per model call: run id, label, model, effort, and the `usage` object. What `npm run cost` reads. |
 | `greenhouse-slugs.txt` · `greenhouse-dead.txt` | The same two lists for Greenhouse. Kept separate so a token that collides with an Ashby slug cannot confuse either. |
 

@@ -6,6 +6,11 @@
 //   node coverage.js --force      recompute even if cached
 //   node coverage.js --scorer opus   use claude-opus-5 for the scoring half
 //   node coverage.js --show       print what is already computed, call nothing
+//   node coverage.js --batch      both passes through the Batch API, at half price
+//
+// --batch runs each pass as one submitted batch instead of a concurrent pool. The
+// two passes stay sequential — pass 2 scores what pass 1 extracted — so it is two
+// batches, not one. Results arrive within 24 hours (usually far less).
 //
 // Two passes, deliberately separate:
 //
@@ -29,7 +34,7 @@
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
 import { z } from 'zod';
-import { ask, context, preflight } from '../lib/ai.js';
+import { ask, askBatch, parseBatchResult, context, preflight } from '../lib/ai.js';
 import { hash } from '../lib/corpus.js';
 import { resumeText } from '../lib/resume-text.js';
 import { progress } from '../lib/progress.js';
@@ -46,6 +51,7 @@ const SCORER  = argv.includes('--scorer')
   : 'claude-haiku-4-5';
 const EXTRACTOR = 'claude-haiku-4-5';
 const JOBS    = jobsFlag(argv);
+const USE_BATCH = argv.includes('--batch');
 
 // Required requirements carry full weight; preferred ones count, but less.
 const PREFERRED_WEIGHT = 0.4;
@@ -171,7 +177,34 @@ if (!needExtract.length && !needScore.length) { console.log('\nnothing to do'); 
 
 // ---- pass 1: requirements ----------------------------------------------
 
+// The extraction prompt, shared by both paths so they cannot drift.
+const extractUser = w => `<posting>\n${jdText(w.j).slice(0, 14000)}\n</posting>`;
+const extractRow = (w, requirements) => ({
+  jdHash: w.jdHash, id: w.j.id, title: w.j.title, slug: w.j.slug,
+  requirements, model: EXTRACTOR, at: new Date().toISOString(),
+});
+
 const exBar = needExtract.length ? progress(needExtract.length, 'requirements') : null;
+
+if (USE_BATCH && needExtract.length) {
+  // Not `results` — that name belongs to the module-scope accumulator declared
+  // further down, and shadowing it here threw on the temporal dead zone *after*
+  // the batch had been submitted and billed.
+  const batched = await askBatch(
+    needExtract.map(w => ({ system: EXTRACT_SYSTEM, user: extractUser(w) })),
+    { schema: Requirements, maxTokens: 3000, effort: 'low', model: EXTRACTOR,
+      label: 'coverage:extract', onProgress: d => exBar?.set(d) },
+  );
+  exBar?.finish();
+  for (const [k, w] of needExtract.entries()) {
+    const parsed = parseBatchResult(batched.get(k), Requirements);
+    if (!parsed.ok) { console.warn(`  ! ${w.j.title}: ${parsed.error}`); continue; }
+    const row = extractRow(w, parsed.value.requirements);
+    fs.appendFileSync(P.requirements, JSON.stringify(row) + '\n');
+    reqCache.set(w.jdHash, row);
+  }
+} else {
+
 const extracted = await pool(needExtract, async (w) => {
   const { requirements } = await ask(
     EXTRACT_SYSTEM,
@@ -198,12 +231,84 @@ for (const [k, r] of extracted.entries()) {
   if (!r.ok) console.warn(`  ! ${needExtract[k].j.title}: ${r.error.message}`);
 }
 
+}   // end of the synchronous extraction path
+
 // ---- pass 2: score each requirement ------------------------------------
 
 const SCORE_SYSTEM = scoreSystem(resume);
 const results = [];
 
+// The scoring request and the row it produces — shared, so the batch path and the
+// synchronous one cannot compute coverage two different ways.
+const scoreUser = (w, reqs) =>
+  `<role>${w.j.title} at ${w.j.slug}</role>\n<requirements>\n` +
+  reqs.map((r, k) => `${k}. [${r.required ? 'required' : 'preferred'}] ${r.text}`).join('\n') +
+  `\n</requirements>`;
+
+function rowFrom(w, reqs, scores) {
+  const byIndex = new Map(scores.map(s => [s.index, s]));
+  const detail = reqs.map((r, k) => {
+    const s = byIndex.get(k);
+    return {
+      ...r,
+      score: Math.max(0, Math.min(MAX_POINTS, s?.score ?? 0)),
+      evidence: s?.evidence ?? 'not returned',
+    };
+  });
+
+  // Logistics are not capabilities. "On-site 3 days per week in SF" always scores 0
+  // because no resume demonstrates willingness to be somewhere, and counting that as
+  // a failed requirement drags fitness down for a question the resume cannot answer.
+  // They are reported separately, as things to check against your own constraints.
+  const capability = detail.filter(d => d.kind !== 'logistics');
+  const constraints = detail.filter(d => d.kind === 'logistics');
+
+  let num = 0, den = 0, met = 0;
+  for (const d of capability) {
+    const weight = d.required ? 1 : PREFERRED_WEIGHT;
+    num += d.score * weight; den += MAX_POINTS * weight;
+    if (d.score >= 2) met++;
+  }
+
+  const plain = capability.length
+    ? capability.reduce((a, d) => a + d.score, 0) / (capability.length * MAX_POINTS)
+    : 0;
+  return {
+    key: w.key, jdHash: w.jdHash, resumeHash: resumeHash,
+    id: w.j.id, title: w.j.title, slug: w.j.slug,
+    applyUrl: w.j.applyUrl, jobUrl: w.j.jobUrl,
+    coverage: Number((den ? num / den : 0).toFixed(4)),
+    coverageUnweighted: Number(plain.toFixed(4)),
+    met, total: capability.length,
+    gaps: capability.filter(d => d.required && d.score <= 1).map(d => d.text),
+    constraints: constraints.map(d => d.text),
+    requirements: detail,
+    model: SCORER, at: new Date().toISOString(),
+  };
+}
+
 const scBar = needScore.length ? progress(needScore.length, 'coverage') : null;
+
+if (USE_BATCH && needScore.length) {
+  // Only postings pass 1 produced requirements for — the rest have nothing to score.
+  const todo = needScore.filter(w => reqCache.get(w.jdHash)?.requirements?.length);
+  // Named `batched`, not `results` — `results` is the module-scope accumulator the
+  // report reads, and shadowing it here threw on the temporal dead zone *after* the
+  // batch had been submitted and billed. Twice.
+  const batched = await askBatch(
+    todo.map(w => ({ system: SCORE_SYSTEM, user: scoreUser(w, reqCache.get(w.jdHash).requirements) })),
+    { schema: Assessment, maxTokens: 4000, effort: 'low', model: SCORER,
+      label: 'coverage:score', onProgress: d => scBar?.set(d) },
+  );
+  scBar?.finish();
+  for (const [k, w] of todo.entries()) {
+    const parsed = parseBatchResult(batched.get(k), Assessment);
+    if (!parsed.ok) { console.warn(`  ! ${w.j.title}: ${parsed.error}`); continue; }
+    const row = rowFrom(w, reqCache.get(w.jdHash).requirements, parsed.value.scores);
+    fs.appendFileSync(P.coverage, JSON.stringify(row) + '\n');
+    results.push(row);
+  }
+} else {
 const scored = await pool(needScore, async (w) => {
   const reqs = reqCache.get(w.jdHash)?.requirements;
   // Nothing extracted for this posting, so there is nothing to score against.
@@ -276,6 +381,8 @@ if (scored.stopped) {
 for (const [k, r] of scored.entries()) {
   if (!r.ok) console.warn(`  ! ${needScore[k].j.title}: ${r.error.message}`);
 }
+
+}   // end of the synchronous scoring path
 
 // ---- report ------------------------------------------------------------
 

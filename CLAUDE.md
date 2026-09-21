@@ -129,6 +129,22 @@ load-bearing** — writing in completion order costs nothing. "So the file order
 deterministic" is what justified banking fitness.js's scores, and it was not worth
 the run.
 
+## The Batch API
+
+`--batch` on fitness and coverage sends the same requests asynchronously at half
+price. Measured: $0.01614 a posting synchronously against $0.00886 batched, 45% off.
+
+- **Results come back in ANY order.** They are keyed by `custom_id` through
+  `idFor`/`collect` in `lib/batch-api.js`. Keying by position attaches a score to the
+  wrong posting, silently — the same class of bug as fitness's echoed index.
+- **`buildRequest()` in `lib/ai.js` builds the body for both paths.** A batch request
+  that differed by a byte would also miss the cache the sync path warms.
+- **The batch id is written before the first poll.** It bills whether or not this
+  process is still watching, so an interrupted run has to be resumable, not re-payable.
+- **Never name a batch result `results` in a script that already has a `results`
+  accumulator.** The temporal dead zone throws *after* submission — the batch is paid
+  for and the results are discarded. This cost two batches to learn.
+
 ## Failures that are the same for every item
 
 A bad API key is the same answer for all of them. One run made 1,396 requests,
