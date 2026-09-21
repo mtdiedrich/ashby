@@ -12,6 +12,7 @@
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
+import { atsOf } from '../lib/ats.js';
 import readline from 'node:readline';
 import { chromium } from 'playwright';
 import { z } from 'zod';
@@ -123,8 +124,13 @@ for (const [i, job] of queue.entries()) {
   // the ashby-application-form-* classes. A Greenhouse form has none of them, so
   // every rule would miss and the model would be handed an empty field list. Say so
   // and open nothing, rather than produce a page of red and call it a result.
-  if ((job.ats ?? 'ashby') !== 'ashby') {
-    console.log(`  ${job.ats} form — apply.js only fills Ashby's. Open it yourself.`);
+  // Not `job.ats ?? 'ashby'`: the queued row is the FITNESS row, and rowsFrom()
+  // never copied `ats`, so every Greenhouse posting read as Ashby here and hung 30s
+  // on [data-field-path]. atsOf() infers from the id prefix and the board host, so
+  // rows already on disk without the field route correctly too.
+  const ats = atsOf(job);
+  if (ats !== 'ashby') {
+    console.log(`  ${ats} form — apply.js only fills Ashby's. Open it yourself.`);
     continue;
   }
 

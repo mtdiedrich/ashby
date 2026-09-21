@@ -110,3 +110,60 @@ test('does not treat consent or eligibility questions as demographic', () => {
     assert.equal(isDemographic(label), false, `"${label}" must not be demographic`);
   }
 });
+
+// ---- Greenhouse, read off a live job-boards.greenhouse.io form 2026-09-21 ----
+//
+// The same safety property has to hold on a second ATS, and Greenhouse words every
+// one of these differently from Ashby. Captured verbatim from Figma's board, which
+// renders the US voluntary self-identification block as react-select comboboxes
+// with stable ids (gender, hispanic_ethnicity, veteran_status, disability_status).
+//
+// The veteran set is the dangerous one: the assertive answer "I am not a protected
+// veteran" is the FIRST option, so anything that falls back to index 0, or matches a
+// bare /not/, asserts the candidate's veteran status on their behalf.
+
+test('greenhouse gender: Decline To Self Identify', () => {
+  assert.equal(idx('Male', 'Female', 'Decline To Self Identify'), 2);
+});
+
+test('greenhouse veteran: the decline is last, the assertion is first', () => {
+  const opts = [
+    'I am not a protected veteran',
+    'I identify as one or more of the classifications of a protected veteran',
+    "I don't wish to answer",
+  ];
+  assert.equal(idx(...opts), 2);
+  assert.notEqual(idx(...opts), 0, 'must never assert "I am not a protected veteran"');
+});
+
+test('greenhouse disability: "I do not want to answer", not "No, I do not have a disability"', () => {
+  const opts = [
+    'Yes, I have a disability, or have had one in the past',
+    'No, I do not have a disability and have not had one in the past',
+    'I do not want to answer',
+  ];
+  assert.equal(idx(...opts), 2);
+  assert.notEqual(idx(...opts), 1, 'must never assert the absence of a disability');
+});
+
+test('greenhouse hispanic/latino: a bare No is not a decline', () => {
+  assert.equal(idx('Yes', 'No', 'Decline To Self Identify'), 2);
+});
+
+test('greenhouse demographic labels are recognised as demographic', () => {
+  for (const label of ['Gender', 'Are you Hispanic/Latino?', 'Veteran Status', 'Disability Status']) {
+    assert.equal(isDemographic(label), true, `should be demographic: ${label}`);
+  }
+});
+
+test('greenhouse non-demographic questions on the same form are not', () => {
+  for (const label of [
+    'Are you authorized to work in the country for which you applied? *',
+    'Have you ever worked for Figma before, as an employee or a contractor/consultant?',
+    'Where did you hear about this job?*',
+    'Why do you want to join Figma?*',
+    'Preferred First Name',
+  ]) {
+    assert.equal(isDemographic(label), false, `should NOT be demographic: ${label}`);
+  }
+});

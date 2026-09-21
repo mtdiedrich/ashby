@@ -144,6 +144,9 @@ const rowsFrom = (results) => {
       id: j.id, title: j.title, slug: j.slug,
       location: j.location, salary: j.salary,
       jobUrl: j.jobUrl, applyUrl: j.applyUrl,
+      // Carried because the board queues THIS row, and apply.js gates on it. Without
+      // it every scored Greenhouse posting reached apply.js looking like Ashby.
+      ats: j.ats ?? 'ashby',
       scoredAt: new Date().toISOString(), model: MODEL,
     });
   }
