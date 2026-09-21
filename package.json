@@ -16,7 +16,8 @@
     "test-fill": "node bin/test-fill.js",
     "check-docs": "node bin/check-docs.js",
     "test": "node --test test/",
-    "test:watch": "node --test --watch test/"
+    "test:watch": "node --test --watch test/",
+    "cost": "node bin/cost.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

@@ -176,7 +176,7 @@ const extracted = await pool(needExtract, async (w) => {
   const { requirements } = await ask(
     EXTRACT_SYSTEM,
     `<posting>\n${jdText(w.j).slice(0, 14000)}\n</posting>`,
-    { schema: Requirements, maxTokens: 3000, effort: 'low', model: EXTRACTOR },
+    { schema: Requirements, maxTokens: 3000, effort: 'low', model: EXTRACTOR, label: 'coverage:extract' },
   );
   const row = { jdHash: w.jdHash, id: w.j.id, title: w.j.title, slug: w.j.slug,
                 requirements, model: EXTRACTOR, at: new Date().toISOString() };
@@ -213,7 +213,7 @@ const scored = await pool(needScore, async (w) => {
     SCORE_SYSTEM, `<role>${w.j.title} at ${w.j.slug}</role>\n<requirements>\n` +
       reqs.map((r, k) => `${k}. [${r.required ? 'required' : 'preferred'}] ${r.text}`).join('\n') +
       `\n</requirements>`,
-    { schema: Assessment, maxTokens: 4000, effort: 'low', model: SCORER },
+    { schema: Assessment, maxTokens: 4000, effort: 'low', model: SCORER, label: 'coverage:score' },
   );
 
   const byIndex = new Map(scores.map(s => [s.index, s]));

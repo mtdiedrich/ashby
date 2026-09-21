@@ -116,7 +116,8 @@ const outcomes = await pool(groups, async (i) => {
   // 8th silently unscored — 1.9% of postings on a real run. Ask again for the gaps.
   const { results, missing } = await completeBatch(want, async (indices) => {
     const user = indices.map(ix => describe(jobs[ix], ix)).join('\n\n');
-    const { results } = await ask(SYSTEM, user, { schema: Scored, maxTokens: 8000, documents: [RESUME] });
+    const { results } = await ask(SYSTEM, user, { schema: Scored, maxTokens: 8000, documents: [RESUME],
+      label: 'fitness', items: indices.length });
     return results;
   });
 

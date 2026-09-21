@@ -104,7 +104,7 @@ and "Experience running Kubernetes in production" are one theme. Keep themes spe
 "PyTorch" and "distributed training" are different. Every index appears exactly once.
 Name each theme in a handful of words.`,
       distinct.map((t, k) => `${k}. ${t}`).join('\n'),
-      { schema: Themes, maxTokens: 8000, model: 'claude-haiku-4-5' },
+      { schema: Themes, maxTokens: 8000, model: 'claude-haiku-4-5', label: 'gaps' },
     );
     themeOf = new Map();
     for (const t of themes) for (const m of t.members) if (distinct[m]) themeOf.set(distinct[m], t.theme);

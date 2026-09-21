@@ -185,7 +185,7 @@ for (const [i, job] of queue.entries()) {
       const { steps } = await ask(
         PLAN_SYSTEM,
         `<job>${job.title} at ${job.slug}\n\n${posting}</job>\n\n<fields>\n${JSON.stringify(fields, null, 1)}\n</fields>`,
-        { schema: Plan, maxTokens: 12_000, documents: [RESUME_DOC] },
+        { schema: Plan, maxTokens: 12_000, documents: [RESUME_DOC], label: 'apply' },
       );
       record.planResults = await page.evaluate(p => window.__ashby.applyPlan(p), normalise(steps));
     } else if (fields.length) {

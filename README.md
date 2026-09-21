@@ -176,6 +176,7 @@ sorted by variance, not by fit.
 | `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`, `--jobs N` (requests at once, default 6). |
 | `npm run similarity` | Embed the staged postings and the resume, so they have a similarity score. `--dry` prices it first, `--force` re-embeds regardless, `--corpus` embeds the whole corpus rather than just the worklist. |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
+| `npm run cost` | What the model calls have cost, by what spends it. `--last` (the most recent run), `--runs` (one line per run), `--batch` (the same totals at the Batch API's 50%). |
 | `npm run apply` | Fill the queued forms, then ask whether you submitted each one. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`, `--wait-parse N` (seconds to wait for Ashby's resume parser, default 3). |
 | `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
 | `npm run harvest` | Find and validate new company boards. `--discover` searches the four crawl sources; `--wayback`, `--hn`, `--github`, `--commoncrawl` each pick one; `--yc` guesses from the YC directory (opt-in, see below); `--greenhouse` harvests Greenhouse boards instead of Ashby; with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
@@ -208,6 +209,39 @@ it refused are **red**:
   to anything on your behalf.
 - **Anything not answerable from `context.md`.** The model skips rather than guessing,
   because a plausible invented answer on a job application is worse than a gap.
+
+### What a run costs
+
+```powershell
+npm run cost
+```
+
+Every model call appends its `usage` to `data/usage.jsonl`, so this is measured
+rather than estimated. Measured over ~1,000 postings:
+
+| | share of the bill | per posting |
+|---|---|---|
+| fitness (Sonnet 5, effort `high`) | **73%** | $0.0080 |
+| coverage — extract (Haiku) | 17% | $0.0034 |
+| coverage — score (Haiku) | 10% | $0.0049 |
+| similarity (OpenAI embeddings) | under 1% | $0.00003 |
+
+Two things that only show up once usage is recorded:
+
+**About 72% of fitness's output tokens are thinking**, not the scores. Sonnet 5 runs
+adaptive thinking and `ask()` asks for effort `high`; thinking bills at the output
+rate and never appears in `fitness.jsonl`, so no amount of reading the stored results
+would have found it.
+
+**Coverage's prompts do not cache.** Haiku 4.5 needs a 4,096-token prefix before
+`cache_control` does anything, and coverage's two system prompts are 259 and 1,431
+tokens. The markers are inert — which is why the cache-hit column reads `—` for both.
+fitness caches fine (8,585-token prefix against Sonnet 5's 1,024 minimum), and its 40%
+hit rate is what the shape predicts: the rest of each request is the postings, which
+are different every time and can never cache.
+
+`--runs` separates concurrent runs. Two scoring runs at once write to the same log,
+and before run ids existed their spend blended.
 
 ### How long a run takes
 
@@ -518,6 +552,7 @@ work from any directory.
 | `dismissed.jsonl` | What you said no to. |
 | `log.jsonl` | One line per apply attempt: what filled, what failed, what was left red. |
 | `dead.txt` · `raw.txt` · `candidates.txt` | Slug harvesting: rejected, pending, and the shipped seed list. |
+| `usage.jsonl` | One line per model call: run id, label, model, effort, and the `usage` object. What `npm run cost` reads. |
 | `greenhouse-slugs.txt` · `greenhouse-dead.txt` | The same two lists for Greenhouse. Kept separate so a token that collides with an Ashby slug cannot confuse either. |
 
 ---
