@@ -33,7 +33,7 @@ import { wantedTitle, usLocation } from '../lib/filters.js';
 import { topUnscored } from '../lib/select.js';
 import { appliedIds, openedIds } from '../lib/applog.js';
 import { adapterFor, postingUrl } from '../lib/ats.js';
-import { summaryOf, detailOf } from '../lib/board-row.js';
+import { summaryOf, detailOf, byValue } from '../lib/board-row.js';
 import { composite } from '../lib/composite.js';
 import { salaryOf } from '../lib/comp.js';
 import * as vec from '../lib/vec.js';
@@ -85,7 +85,10 @@ function vectors() {
 }
 
 /** Every posting we know about, with whichever of the three numbers exist. */
-function board({ all = false, us = false, remote = false, scoredOnly = false, limit = 600 } = {}) {
+// The default limit covers the whole filtered candidate set (about 2,900) rather
+// than truncating it. A lean row is ~340 bytes, so all of them is under a megabyte —
+// which is only affordable because descriptions moved to /api/detail.
+function board({ all = false, us = false, remote = false, scoredOnly = false, limit = 5000 } = {}) {
   const corp = corpusCached();
 
   const fit = newestById(read(P.fitness), 'scoredAt');
@@ -167,10 +170,11 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
   // what you are actually looking at, and re-scales when you change the filters.
   const scored = composite(rows);
 
-  // Default order: judged postings first by fitness, then by similarity, then the rest.
-  scored.sort((a, b) =>
-    (b.fitness ?? -1) - (a.fitness ?? -1) ||
-    (b.similarity ?? -9) - (a.similarity ?? -9));
+  // Ordered the way the page orders it. Sorting here by fitness and slicing the top
+  // N, while the page sorted what it got by value, meant every posting under two
+  // days old fell below the fitness cutoff and was never sent — the board's freshest
+  // row read two days old while seven newer ones sat on disk.
+  scored.sort(byValue);
 
   return {
     // Lean rows only. Shipping descriptions and requirement evidence for every row
@@ -288,7 +292,7 @@ const server = http.createServer((req, res) => {
       us: q.get('us') === '1',
       remote: q.get('remote') === '1',
       scoredOnly: q.get('scored') === '1',
-      limit: Math.min(Number(q.get('limit')) || 600, 6000),
+      limit: Math.min(Number(q.get('limit')) || 5000, 20000),
     })));
   }
 

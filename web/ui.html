@@ -141,7 +141,7 @@
 <button class="tab" id="more" hidden>show more</button>
 
 <script>
-let JOBS = [], TOTAL = 0, term = '', sortKey = 'value', sortDir = -1, limit = 600;
+let JOBS = [], TOTAL = 0, term = "", sortKey = "value", sortDir = -1, limit = 5000;
 const opts = { us: true, remote: false, all: false, scored: false };
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -353,7 +353,7 @@ for (const t of document.querySelectorAll('.tab[data-f]')) {
     if (opts[k] && k === 'us') opts.remote = false;
     if (opts[k] && k === 'remote') opts.us = false;
     for (const o of document.querySelectorAll('.tab[data-f]')) o.setAttribute('aria-pressed', String(!!opts[o.dataset.f]));
-    limit = 600;
+    limit = 5000;
     load();
   });
 }

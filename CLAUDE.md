@@ -224,6 +224,13 @@ nothing. Measured: 96.5% of a 380 MB corpus was descriptions that would never be
   Shipping descriptions and requirement evidence with every row made one response
   5.8 MB and made typing in the filter box unusable.
 - **The filter input is debounced.** `render()` rebuilds the whole table.
+- **The server orders by the same key the page does** — `byValue` in
+  `lib/board-row.js`. It used to order by fitness and slice the top 600 while the
+  page sorted what it got by `value`; every posting under two days old fell below
+  the fitness cutoff (0.32) and was never sent, so the board's freshest row read two
+  days old while seven newer ones sat on disk. **A slice taken on one ordering
+  cannot serve a view ordered by another** — if the page gains a new sort column,
+  either send the whole filtered set or slice on that column.
 - **`corpus()` is cached on mtime in ui.js (`corpusCached`).** 246,000 postings is
   ~1.5s a parse and it was being paid on every request, including every row expand.
   Anything added to a request path must go through the cache, not `corpus()`.

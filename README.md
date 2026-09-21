@@ -246,6 +246,11 @@ The table ships only what a row draws — 0.2 MB for 600 rows. Descriptions and
 requirement evidence are fetched per posting when you expand it, and kept, so
 collapsing and re-expanding costs nothing.
 
+The board sends the whole filtered candidate set (~2,900 rows, under a megabyte) and
+orders it by `value`, the same column the page sorts on. It used to order by fitness
+and send the top 600, which silently dropped every posting under two days old —
+they scored below the fitness cutoff and never reached the browser at all.
+
 That was 5.8 MB before, all of it rebuilt as HTML on every keystroke in the filter
 box, including 600 detail panes hidden behind CSS. Typing was unusable. The filter is
 also debounced now, and `corpus.jsonl` is cached on mtime rather than re-parsed per
