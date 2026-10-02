@@ -10,8 +10,8 @@ afterEach(() => { if (home) cleanup(home); home = null; });
 // Imported lazily so each test sees the current ASHBY_HOME.
 const load = async () => {
   const { corpus } = await import('../lib/corpus.js?' + Math.random());
-  const { candidates } = await import('../lib/select.js?' + Math.random());
-  return { corpus, candidates };
+  const { candidates, finished } = await import('../lib/select.js?' + Math.random());
+  return { corpus, candidates, finished };
 };
 
 test('the corpus is read newest-record-per-id', async () => {
@@ -25,21 +25,17 @@ test('the corpus is read newest-record-per-id', async () => {
   assert.equal(c.get('a').description, 'new', 'newest wins');
 });
 
-test('a posting needs BOTH scores before it stops being proposed', async () => {
+// Jev's fitness is the only front since 2026-10-02. Through the real finished(), so
+// the rule cannot change underneath this test.
+test('a posting stops being proposed once it has a fitness score, and not before', async () => {
   home = tempHome({
     'data/corpus.jsonl': jsonl([corpusRecord({ id: 'a' }), corpusRecord({ id: 'b' })]),
-    'data/fitness.jsonl': jsonl([
-      { id: 'a', fitness: 0.5, scoredAt: '2026-09-01T00:00:00.000Z' },
-      { id: 'b', fitness: 0.4, scoredAt: '2026-09-01T00:00:00.000Z' },
-    ]),
-    'data/coverage.jsonl': jsonl([{ id: 'a', coverage: 0.3, at: '2026-09-01T00:00:00.000Z' }]),
+    'data/jev-fitness.jsonl': jsonl([{ id: 'a', fitness: 0.3, at: '2026-09-01T00:00:00.000Z' }]),
   });
-  const { corpus, candidates } = await load();
-  const idsIn = f => new Set(fs.readFileSync(home + '/data/' + f, 'utf8')
+  const { corpus, candidates, finished } = await load();
+  const fit = new Set(fs.readFileSync(home + '/data/jev-fitness.jsonl', 'utf8')
     .split('\n').filter(Boolean).map(l => JSON.parse(l).id));
-  const fit = idsIn('fitness.jsonl'), cov = idsIn('coverage.jsonl');
-  const done = new Set([...fit].filter(id => cov.has(id)));
-  // b has fitness but no coverage, so it is still work.
+  const done = finished({ fitness: fit });
   assert.deepEqual(candidates(corpus(), { done }).map(r => r.id), ['b']);
 });
 

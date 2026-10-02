@@ -53,106 +53,59 @@ test('an unknown age is null, not zero', () => {
 });
 
 test('freshness is absolute — one ancient posting cannot compress the rest', () => {
-  const a = composite([
-    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 3 },
-    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 965 },
-  ]);
-  const b = composite([
-    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 3 },
-    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 20 },
-  ]);
+  const a = composite([{ fitness: 0.5, daysLive: 3 }, { fitness: 0.5, daysLive: 965 }]);
+  const b = composite([{ fitness: 0.5, daysLive: 3 }, { fitness: 0.5, daysLive: 20 }]);
   assert.equal(a[0].fresh, b[0].fresh);
 });
 
-// ---- score: geometric mean of the three model scores --------------------
+// ---- value: the geometric mean of scaled fitness and freshness ---------------------
+//
+// Fitness is the only model score (2026-10-02). It replaced coverage after 100 postings
+// where the two disagreed by 0.25+ were judged by hand: fitness was closer in 90, with
+// mean error 0.08 against coverage's 0.35. Fitness is min-maxed across the rows shown
+// before it is combined, so its tendency to run low does not let freshness outweigh it.
 
-test('score is the geometric mean of the three normalised scores', () => {
-  const [best] = composite([{ fitness: 1, coverage: 1, similarity: 1, daysLive: 0 }]);
-  assert.equal(best.score, 1);
-});
-
-test('score ignores freshness entirely', () => {
-  // Same three scores, wildly different ages — score must not move.
-  const [fresh, stale] = composite([
-    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 0 },
-    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 900 },
-  ]);
-  assert.equal(fresh.score, stale.score);
-  assert.ok(fresh.fresh > stale.fresh, 'but freshness does move');
-});
-
-test('one weak score drags score down — the point of a geometric mean', () => {
-  // Three rows, so min-max has a real spread rather than collapsing to 0 and 1.
-  const [middling, lopsided] = composite([
-    { fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: 0 },
-    { fitness: 1.0, coverage: 1.0, similarity: 0.0, daysLive: 0 },
-    { fitness: 0.0, coverage: 0.0, similarity: 0.4, daysLive: 0 },
-  ]);
-  const mean = r => (r.nFitness + r.nCoverage + r.nSimilarity) / 3;
-  // Identical averages: 0.50/0.50/1.00 and 1.00/1.00/0.00 both average to 0.667.
-  // An arithmetic mean cannot tell these apart at all.
-  assert.ok(Math.abs(mean(lopsided) - mean(middling)) < 1e-9,
-    'the two rows have the same average, by construction');
-  // The geometric mean does: being worst-in-field on one axis is not survivable.
-  assert.ok(lopsided.score < middling.score * 0.5,
-    `lopsided ${lopsided.score} should be far below middling ${middling.score}`);
-});
-
-test('nothing collapses to exactly zero, so ordering survives', () => {
-  // min-max always puts the lowest row at 0 on its axis; without a floor the
-  // geometric mean would zero those rows and lose every distinction below.
-  const out = composite([
-    { fitness: 0, coverage: 0.9, similarity: 0.9, daysLive: 0 },
-    { fitness: 0, coverage: 0.1, similarity: 0.1, daysLive: 0 },
-    { fitness: 1, coverage: 1, similarity: 1, daysLive: 0 },
-  ]);
-  assert.ok(out[0].score > 0);
-  assert.ok(out[0].score > out[1].score);
-});
-
-test('score is null unless all three exist', () => {
-  const [partial, whole] = composite([
-    { fitness: 0.5, coverage: null, similarity: 0.2, daysLive: 5 },
-    { fitness: 0.5, coverage: 0.5, similarity: 0.2, daysLive: 5 },
-  ]);
-  assert.equal(partial.score, null);
-  assert.equal(typeof whole.score, 'number');
-});
-
-// ---- value: the average of score and fresh ------------------------------
-
-test('value is the average of score and fresh', () => {
-  const [row] = composite([{ fitness: 1, coverage: 1, similarity: 1, daysLive: HALF_LIFE_DAYS }]);
-  assert.equal(row.score, 1);
-  assert.ok(Math.abs(row.fresh - 0.5) < 1e-9);
-  assert.ok(Math.abs(row.value - 0.75) < 1e-3, `expected ~0.75, got ${row.value}`);
-});
-
-test('a perfect, brand-new posting scores 1', () => {
-  const [row] = composite([{ fitness: 1, coverage: 1, similarity: 1, daysLive: 0 }]);
+test('a best-fitting, brand-new posting is worth 1', () => {
+  const [row] = composite([{ fitness: 0.6, daysLive: 0 }]);
   assert.equal(row.value, 1);
 });
 
-test('value is null when score is null', () => {
-  const [row] = composite([{ fitness: 0.5, coverage: null, similarity: 0.2, daysLive: 5 }]);
-  assert.equal(row.value, null);
+test('value is the geometric mean of scaled fitness and freshness', () => {
+  const out = composite([{ fitness: 0.1, daysLive: 0 }, { fitness: 0.7, daysLive: HALF_LIFE_DAYS }]);
+  // row 1: nFitness 1, fresh 0.5 -> sqrt(0.5)
+  assert.equal(out[1].value, Number(Math.sqrt(0.5).toFixed(3)));
 });
 
-test('value is null when the age is unknown', () => {
-  const [row] = composite([{ fitness: 0.5, coverage: 0.5, similarity: 0.5, daysLive: null }]);
-  assert.equal(row.value, null);
+test('fitness is scaled across the rows shown', () => {
+  const out = composite([{ fitness: 0.2, daysLive: 0 }, { fitness: 0.6, daysLive: 0 }, { fitness: 0.4, daysLive: 0 }]);
+  assert.deepEqual(out.map(r => Number(r.nFitness.toFixed(6))), [0, 1, 0.5]);
 });
 
-test('freshness and score weigh equally', () => {
-  // A perfect score, long dead, lands at half. That is the trade value makes
-  // explicit: half the number is how good it is, half is whether it is still worth
-  // chasing.
-  const out = composite([
-    { fitness: 1, coverage: 1, similarity: 1, daysLive: 0 },
-    { fitness: 1, coverage: 1, similarity: 1, daysLive: 999 },
+test('weak on either side drags value down — the point of a geometric mean', () => {
+  const [middling, ancient] = composite([
+    { fitness: 0.5, daysLive: HALF_LIFE_DAYS },
+    { fitness: 0.9, daysLive: 999 },
+    { fitness: 0.1, daysLive: 0 },
   ]);
-  assert.ok(Math.abs(out[0].value - 1) < 1e-3);
-  assert.ok(Math.abs(out[1].value - 0.5) < 1e-3, 'perfect but ancient lands at half');
+  assert.ok(ancient.value < middling.value * 0.5);
+});
+
+test('nothing collapses to exactly zero, so ordering survives', () => {
+  const out = composite([{ fitness: 0.1, daysLive: 0 }, { fitness: 0.1, daysLive: 30 }, { fitness: 0.9, daysLive: 0 }]);
+  assert.ok(out[0].value > 0);
+  assert.ok(out[0].value > out[1].value);
+});
+
+test('value is null when fitness is missing, or the age is', () => {
+  assert.equal(composite([{ fitness: null, daysLive: 5 }])[0].value, null);
+  assert.equal(composite([{ fitness: 0.5, daysLive: null }])[0].value, null);
+});
+
+test('coverage on a row changes nothing — it was dropped', () => {
+  const a = composite([{ fitness: 0.4, daysLive: 1 }, { fitness: 0.9, daysLive: 3 }]);
+  const b = composite([{ fitness: 0.4, coverage: 0.9, daysLive: 1 }, { fitness: 0.9, coverage: 0.1, daysLive: 3 }]);
+  assert.deepEqual(a.map(r => r.value), b.map(r => r.value));
+  assert.equal('nCoverage' in b[0], false);
 });
 
 test('an empty set does not throw', () => {

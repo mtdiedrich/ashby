@@ -25,7 +25,7 @@ const problems = [];
 
 // Scripts that are implementation details of an npm command rather than commands
 // themselves. Their flags need no user-facing documentation.
-const INTERNAL = new Set(['crawl.js', 'embed.js']);
+const INTERNAL = new Set(['crawl.js']);
 
 // ---- scripts documented -------------------------------------------------
 // A script counts as documented under either name: bin/poll.js or 'npm run poll'.

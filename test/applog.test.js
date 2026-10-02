@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appliedIds, openedIds, dropFromQueue } from '../lib/applog.js';
+import { appliedIds, openedIds, dropFromQueue, answerEffect, SUBMITTED_PROMPT } from '../lib/applog.js';
 
 // log.jsonl records one line per posting apply.js opens. Before this, the board
 // called every one of those "applied" — opening a tab and closing it without
@@ -67,4 +67,40 @@ test('dropping something absent is a no-op, not an error', () => {
 test('the rest of the queue is preserved intact', () => {
   const q = [{ id: 'a', title: 'One', applyUrl: 'u1' }, { id: 'b', title: 'Two' }];
   assert.deepEqual(dropFromQueue(q, 'b'), [{ id: 'a', title: 'One', applyUrl: 'u1' }]);
+});
+
+// ---- the prompt after each posting ---------------------------------------
+//
+// [s] used to drop the posting it was answering for, like [n]. Hit in place of [k]
+// it silently threw away three postings that had not been applied to, and the log
+// could not say which ones: [n] and [s] wrote identical records.
+
+test('[s] stops the run and keeps the posting queued', () => {
+  assert.deepEqual(answerEffect('s'), { submitted: false, keep: true, stop: true });
+});
+
+test('[k] keeps the posting queued and carries on', () => {
+  assert.deepEqual(answerEffect('k'), { submitted: false, keep: true, stop: false });
+});
+
+test('[n] drops the posting and carries on', () => {
+  assert.deepEqual(answerEffect('n'), { submitted: false, keep: false, stop: false });
+});
+
+test('[y] records a submission and drops the posting', () => {
+  assert.deepEqual(answerEffect('y'), { submitted: true, keep: false, stop: false });
+});
+
+test('answers are read case- and whitespace-insensitively', () => {
+  assert.deepEqual(answerEffect(' S\n'), answerEffect('s'));
+});
+
+test('the prompt lists each answer on its own line, in order', () => {
+  const lines = SUBMITTED_PROMPT.split('\n').map(l => l.trim()).filter(l => /^\[/.test(l));
+  assert.deepEqual(lines, [
+    '[y] yes, submitted',
+    '[n] no, drop from queue',
+    '[k] not yet, keep in queue',
+    '[s] stop here, keep in queue',
+  ]);
 });

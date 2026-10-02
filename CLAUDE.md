@@ -13,7 +13,7 @@ scripts work from any working directory and a file can be moved in one place. Ad
 files to `P` there rather than hardcoding them.
 
 Commands are npm scripts: `npm run poll`, `npm run fitness`, `npm run ui`. Flags need
-the separator — `npm run coverage -- --dry`.
+the separator — `npm run fitness -- --dry`.
 
 Job-search tooling over Ashby-hosted boards. Two pipelines; `README.md` explains both.
 
@@ -56,7 +56,7 @@ Run `npm test` before reporting work finished.
 
 ## Never import a script to inspect it
 
-ESM executes on import. `import('../bin/coverage.js')` runs the scorer and spends
+ESM executes on import. `import('../bin/fitness.js')` runs the scorer and spends
 money. To check a script loads, run it with a harmless flag (`--dry`, `--show`,
 `--stats`) or `node --check`. This has already cost an unasked-for $0.58.
 
@@ -90,14 +90,18 @@ earlier explanation was wrong.
 
 ## Boundaries that do not move
 
-- **Nothing auto-queues.** `score.js` ranks. `queue.jsonl` is written only when the
+- **Nothing auto-queues.** Scoring ranks. `queue.jsonl` is written only when the
   user picks something in the UI. `apply.js` reads only `queue.jsonl`.
 - **Nothing submits an application.** `apply.js` fills and stops.
 - **Nothing agrees to anything.** Arbitration agreements, truthfulness
   certifications, consent and acknowledgement boxes are never ticked, whatever
-  widget they use. These commit the user to something.
+  widget they use. These commit the user to something. The one checkbox that is
+  ticked is a group of exactly two boxes, "Yes" and "No" — a yes/no *question* some
+  Ashby boards render that way (`yesNoBoxes` in `lib/fill.browser.js`). It stops
+  being one if its label reads as consent (`CONSENT`) or self-identification, and
+  exactly one box is ever left ticked. `test/ashby-form.test.js` guards both.
 - **Self-identification is declined, never answered.** Gender, ethnicity/race,
-  veteran and disability fields get the field's own "decline to answer" option and
+  veteran, disability, sexual orientation and transgender-status fields get the field's own "decline to answer" option and
   nothing else — see `declineIndex` in `lib/fill.browser.js`. If the field offers
   no way to decline, it is left empty. The safety property is that the matcher
   requires an explicit verb of declining, so it cannot select "I am not a protected
@@ -129,22 +133,6 @@ load-bearing** — writing in completion order costs nothing. "So the file order
 deterministic" is what justified banking fitness.js's scores, and it was not worth
 the run.
 
-## The Batch API
-
-`--batch` on fitness and coverage sends the same requests asynchronously at half
-price. Measured: $0.01614 a posting synchronously against $0.00886 batched, 45% off.
-
-- **Results come back in ANY order.** They are keyed by `custom_id` through
-  `idFor`/`collect` in `lib/batch-api.js`. Keying by position attaches a score to the
-  wrong posting, silently — the same class of bug as fitness's echoed index.
-- **`buildRequest()` in `lib/ai.js` builds the body for both paths.** A batch request
-  that differed by a byte would also miss the cache the sync path warms.
-- **The batch id is written before the first poll.** It bills whether or not this
-  process is still watching, so an interrupted run has to be resumable, not re-payable.
-- **Never name a batch result `results` in a script that already has a `results`
-  accumulator.** The temporal dead zone throws *after* submission — the batch is paid
-  for and the results are discarded. This cost two batches to learn.
-
 ## Failures that are the same for every item
 
 A bad API key is the same answer for all of them. One run made 1,396 requests,
@@ -164,8 +152,9 @@ and then "0 scored" — the only honest line was the zero.
 
 ## Money
 
-`score.js` and `apply.js` cost Anthropic tokens per posting; `embed.js` costs OpenAI
-tokens. Say what a run will cost before starting a large one, and prefer `--dry`,
+`apply.js` costs Anthropic tokens per posting. `fitness.js` calls Jev (TypeSafe AI,
+`JEV_API_KEY`) — about $0.00012 a posting, and not counted by `npm run cost`, which reads
+only Anthropic usage. Say what a run will cost before starting a large one, and prefer `--dry`,
 `--keep`, and `--no-model` when testing.
 
 ## The worklist is the only way in
@@ -174,15 +163,24 @@ tokens. Say what a run will cost before starting a large one, and prefer `--dry`
 yet `finished`, so **a posting counted as finished while a score is still missing can
 never acquire that score** — it is gone from the only list anything consults.
 
-`finished()` in `lib/select.js` therefore requires all THREE fronts: fitness,
-coverage AND a vector. It originally checked two, which stranded 15 postings with
-fitness and coverage, no vector, and so no `score` and no `value` — visible on the
-board and permanently unrankable.
+`finished()` in `lib/select.js` therefore requires every front. There is one now:
+Jev's fitness (`bin/fitness.js`, `lib/jev-fitness.js`, `jev-fitness.jsonl`). When
+there were three it once checked only two, which stranded 15 postings with no vector,
+and so no `score` and no `value` — visible on the board and permanently unrankable.
 
-If you add a fourth scorer, it goes in `finished()` in the same commit, and `poll`
-reports its count alongside the others. Counting the three fronts over different
-populations hides exactly this bug, which is why the embedded figure there is scoped
-to postings that have been scored rather than the whole vector store.
+Everything else was dropped on 2026-10-02: embedding similarity, a Sonnet fitness
+judgement, a combined `score`, and requirement coverage with its Haiku extraction,
+`npm run gaps` and the Batch API. Coverage went after 100 hand-judged postings where
+fitness was closer in 90 (see `lib/jev-fitness.js`). Their data files were deleted. `value` is the geometric mean of min-maxed fitness and freshness.
+
+**Fitness caches by content but `finished()` looks up by id.** A re-listed posting —
+new id, identical description — has an answer and no finished id. `worklistWork`
+copies the answer to the new id (`reuse`), and `bin/fitness.js` writes those copies
+before its "nothing to do" exit. Coverage once had the same bug; dropping it must not
+bring it back.
+
+If you add a scorer, it goes in `finished()` in the same commit, and `poll` reports
+its count alongside the others, counted over the same population.
 
 ## Two ATSes, one corpus
 
@@ -195,9 +193,13 @@ exceptions that are deliberate: `apply.js` routes on the ATS because
 `lib/ats.js`, never by reading `row.ats` directly — derived rows drop the field, and
 that is exactly how a Greenhouse posting once hung 30s on an Ashby selector.
 Greenhouse's react-select ignores synthesized pointer events, so its
-self-identification fields are declined from the Playwright side via
-`lib/decline.js`, which re-exports the page's own matcher so one DECLINE list serves
-both call sites. Never add a second copy of that wording.
+self-identification fields are declined from the Playwright side by
+`declineDemographics()` in `lib/decline.js`, which re-exports the page's own matcher so
+one DECLINE list serves both call sites. Never add a second copy of that wording.
+`test/greenhouse-form.test.js` runs the real filler in a browser against a form with
+the Greenhouse shapes that broke it: intl-tel-input around the phone (a hidden search
+combobox plus ~244 permanently-present hidden `[role=option]`s), react-select that opens
+only on its toggle, multi-selects, and a click swallowed before hydration.
 
 A record with no `ats` field is Ashby. Every one of the 62,000 rows written before
 this predates the field, and Ashby ids stay unprefixed for the same reason —
@@ -238,10 +240,6 @@ nothing. Measured: 96.5% of a 380 MB corpus was descriptions that would never be
   of the list you are already looking at — unlike the old server-side slice, which cut
   on a different ordering than the page displayed. "Show more" re-renders; it does not
   refetch.
-- **The similarity column shows `nSimilarity`, not the raw cosine.** Raw is a centred
-  cosine around 0.1–0.25 and could not be read against fitness and coverage, which run
-  0–1. The scaled value is the one `score` already uses; the raw sits in the cell's
-  title attribute.
 - **The server orders by the same key the page does** — `byValue` in
   `lib/board-row.js`. It used to order by fitness and slice the top 600 while the
   page sorted what it got by `value`; every posting under two days old fell below
@@ -258,11 +256,11 @@ nothing. Measured: 96.5% of a 380 MB corpus was descriptions that would never be
 Scoring passes run through `pool()` in `lib/pool.js`, not a bare `for await` loop.
 Two things there are load-bearing and easy to undo by accident:
 
-- **Results come back in input order.** `fitness.js` sends `<posting index="N">` and
-  matches the reply on that index. Collecting in completion order attaches scores to
-  the wrong postings, silently.
-- **`warmup: true` runs the first call alone.** The system prompt carries `context.md`
-  and the resume PDF under `cache_control`; the first call writes that cache and the
+- **Results come back in input order.** Callers index work by position; the old
+  fitness scorer matched replies on `<posting index="N">`. Collecting in completion
+  order attaches results to the wrong postings, silently.
+- **`warmup: true` runs the first call alone.** When the system prompt is long enough
+  to cache (fitness's carried `context.md` and the resume PDF under `cache_control`), the first call writes that cache and the
   rest read it at ~0.1x. Opening at full width makes the whole first wave miss and
   each one pay the write premium.
 

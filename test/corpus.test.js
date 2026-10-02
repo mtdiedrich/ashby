@@ -30,21 +30,20 @@ test('a torn or truncated line does not lose the rest of the file', async () => 
 
 test('asPosting converts corpus shape to the shape the scorers read', async () => {
   const { asPosting } = await load();
-  const out = asPosting(corpusRecord({ id: 'x', company: 'acme', description: 'body' }), 0.5, () => null);
+  const out = asPosting(corpusRecord({ id: 'x', company: 'acme', description: 'body' }), () => null);
   assert.equal(out.slug, 'acme');
   assert.equal(out.descriptionPlain, 'body');
-  assert.equal(out.similarity, 0.5);
+  assert.equal('similarity' in out, false, 'similarity was dropped 2026-10-02');
   assert.equal('company' in out, false, 'must not carry corpus field names through');
 });
 
 test('embedText reads either record shape and produces the same text', async () => {
   // fresh.jsonl holds poll-shaped records (slug/descriptionPlain); corpus.jsonl holds
-  // corpus-shaped ones (company/description). embed.js now works off the worklist, so
-  // if these disagree every posting re-embeds on the next run and the hash cache is
-  // worthless.
+  // corpus-shaped ones (company/description). crawl's change detection hashes this
+  // text, so if the two shapes disagree every posting reads as changed.
   const { embedText, asPosting } = await load();
   const rec = corpusRecord({ id: 'x', company: 'acme', description: 'Train models at scale.' });
-  const posting = asPosting(rec, null, () => null);
+  const posting = asPosting(rec, () => null);
   assert.equal(embedText(posting), embedText(rec));
 });
 

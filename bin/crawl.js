@@ -22,6 +22,7 @@ import { corpusAndCount, embedText, hash, compactCorpus } from '../lib/corpus.js
 import { progress } from '../lib/progress.js';
 import { jobsFlag } from '../lib/pool.js';
 import { ATS, keepDescription } from '../lib/ats.js';
+import { fetchPatient } from '../lib/fetch.js';
 
 // Boards are fetched a few at a time. 12 matches what harvest.js already uses
 // against the same public API; --jobs raises it if you are impatient, but this is
@@ -98,7 +99,9 @@ let ok = 0, dead = 0, seenTotal = 0, unchanged = 0;
 async function crawlSlug(ats, slug) {
   let body;
   try {
-    const r = await fetch(ats.boardUrl(slug), { signal: AbortSignal.timeout(30_000) });
+    // Not a bare fetch: ~6% of Greenhouse requests stall up to 17s before answering,
+    // and one of those holds a worker for all of it. See lib/fetch.js.
+    const r = await fetchPatient(ats.boardUrl(slug), { timeoutMs: 30_000 });
     if (!r.ok) { dead++; return; }
     body = await r.json();
   } catch { dead++; return; }

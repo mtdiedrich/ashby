@@ -4,20 +4,21 @@
 //   node ui.js --port N   different port
 //   node ui.js --no-open  don't launch a browser
 //
-// Three numbers, three different questions, side by side:
+// One model score per posting:
 //
-//   fitness     fitness.js   should I apply — a judgement weighing role shape,
-//                            seniority, pay and your stated constraints
-//   coverage    coverage.js  what fraction of the requirements this posting states
-//                            can you actually demonstrate
-//   similarity  embed.js     how close does this posting read to your resume
+//   fitness     fitness.js   is the candidate qualified for this job — Jev's answer,
+//                            given the whole posting and the resume
+//
+// combined with freshness into `value`, the default sort. (Embedding similarity, a
+// Sonnet fitness judgement, a combined `score` and requirement coverage were all
+// dropped 2026-10-02; see lib/jev-fitness.js for why coverage went.)
 //
 // A posting shows "-" for anything not computed yet, which is most of them most of
 // the time — the corpus is thousands of postings and only the ones you have run
 // through a scorer have numbers. Every posting is listed regardless.
 //
 // Files are re-read per request so the board is always current; leave it running
-// while poll / fitness / coverage / embed do their thing and refresh.
+// while poll / fitness do their thing and refresh.
 //
 // Queueing writes queue.jsonl, and nothing else ever does. apply.js reads only that.
 //
@@ -30,13 +31,13 @@ import { spawn } from 'node:child_process';
 import { tidy } from '../lib/text.js';
 import { corpus, asPosting } from '../lib/corpus.js';
 import { wantedTitle, usLocation } from '../lib/filters.js';
-import { topUnscored } from '../lib/select.js';
 import { appliedIds, openedIds } from '../lib/applog.js';
-import { adapterFor, postingUrl } from '../lib/ats.js';
-import { summaryOf, detailOf, byValue } from '../lib/board-row.js';
+import { adapterFor, postingUrl, workplaceOf } from '../lib/ats.js';
+import { summaryOf, detailOf, byValue, payForRow } from '../lib/board-row.js';
+import { payFromText } from '../lib/pay-text.js';
+import { estimatesById } from '../lib/levels.js';
 import { composite } from '../lib/composite.js';
 import { salaryOf } from '../lib/comp.js';
-import * as vec from '../lib/vec.js';
 
 const argv = process.argv.slice(2);
 const PORT = argv.includes('--port') ? Number(argv[argv.indexOf('--port') + 1]) : 7777;
@@ -60,8 +61,7 @@ function newestById(rows, stamp) {
 
 // corpus.jsonl is ~190MB and 246,000 postings — a full parse is about 1.5 seconds.
 // It was re-read on every request, which put 1.5s on each board load AND on every
-// row you expand. It only changes when crawl runs, so cache it on mtime the way
-// vectors already is.
+// row you expand. It only changes when crawl runs, so cache it on mtime.
 let ccache = { mtime: 0, map: null };
 function corpusCached() {
   const stat = fs.existsSync(P.corpus) ? fs.statSync(P.corpus) : null;
@@ -71,28 +71,22 @@ function corpusCached() {
   return ccache.map;
 }
 
-// vectors.jsonl is ~35MB and the corpus mean is a full pass over it. Both are stable
-// between embed.js runs, so cache on mtime rather than paying that on every request.
-let vcache = { mtime: 0, stored: null, mu: null };
-function vectors() {
-  const stat = fs.existsSync(P.vectors) ? fs.statSync(P.vectors) : null;
-  if (!stat) return null;
-  if (vcache.stored && vcache.mtime === stat.mtimeMs) return vcache;
-  const stored = vec.load();
-  const mu = vec.mean([...stored].filter(([k]) => k.startsWith('job:')).map(([, r]) => r.v));
-  vcache = { mtime: stat.mtimeMs, stored, mu };
-  return vcache;
+// Pay stated in a description, parsed once per corpus record. Keyed on the record
+// object, so it lives exactly as long as corpusCached() keeps that record — a new
+// corpus brings new objects and the old answers go with the old ones.
+const textPayCache = new WeakMap();
+function textPayOf(c) {
+  if (!textPayCache.has(c)) textPayCache.set(c, payFromText(c.description));
+  return textPayCache.get(c);
 }
 
-/** Every posting we know about, with whichever of the three numbers exist. */
+/** Every posting we know about, with whichever of the numbers exist. */
 // The default limit covers the whole filtered candidate set (about 2,900) rather
 // than truncating it. A lean row is ~340 bytes, so all of them is under a megabyte —
 // which is only affordable because descriptions moved to /api/detail.
 function board({ all = false, us = false, remote = false, scoredOnly = false, limit = 5000 } = {}) {
   const corp = corpusCached();
 
-  const fit = newestById(read(P.fitness), 'scoredAt');
-  const cov = newestById(read(P.coverage), 'at');
   const queued = new Set(read(P.queue).map(r => r.id));
   // Applied means you told apply.js you submitted it. Opening a tab and closing it
   // without sending anything is its own state — counting that as applied made the
@@ -102,9 +96,10 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
   const opened = openedIds(log);
   const staged = new Set(read(P.fresh).map(r => r.id));
   const dismissed = new Set(read(P.dismissed).map(r => r.id));
-
-  const v = vectors();
-  const resumeV = v?.stored?.has('resume') ? vec.centre(v.stored.get('resume').v, v.mu) : null;
+  // levels.fyi estimates, written by `npm run levels`. Display only.
+  const estimates = estimatesById(read(P.payEstimates));
+  // Fitness — Jev's "is the candidate qualified" — the one model score.
+  const jevFit = newestById(read(P.jevFitness), 'at');
 
   // corpus.jsonl is the only store of postings now.
   const ids = new Set(corp.keys());
@@ -113,23 +108,21 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
   for (const id of ids) {
     const c = corp.get(id);
     if (!c) continue;
-    const p = asPosting(c, null, salaryOf);
+    const p = asPosting(c, salaryOf);
 
     if (!all && !wantedTitle(p.title)) continue;
-    if (remote && p.workplaceType !== 'Remote') continue;
+    if (remote && workplaceOf(c) !== 'Remote') continue;
     if (us && !usLocation(p.location, [p.location, p.secondaryLocations].filter(Boolean).join(' | '))) continue;
 
-    const f = fit.get(id);
-    const k = cov.get(id);
-    if (scoredOnly && !f && !k) continue;
-    const sv = resumeV ? v.stored.get(`job:${id}`) : null;
+    const f = jevFit.get(id);
+    if (scoredOnly && !f) continue;
 
     rows.push({
       id,
       title: p.title,
       slug: p.slug,
       location: p.location || '',
-      workplaceType: p.workplaceType ?? null,
+      workplaceType: workplaceOf(c),
       employmentType: p.employmentType ?? null,
       department: p.department ?? null,
       team: p.team ?? null,
@@ -140,29 +133,18 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
       ats: c.ats ?? 'ashby',
       // apply.js only knows Ashby's form DOM; anything else you fill yourself.
       fillable: (c.ats ?? 'ashby') === 'ashby',
-      pay: p.salary?.summary ?? f?.salary?.summary ?? null,
+      // The posting's pay field, else pay its description states, else an estimate.
+      ...payForRow(p.salary?.summary ?? null, p.salary ? null : textPayOf(c), estimates.get(id)),
       description: tidy(c.description ?? ''),
 
       // null, not 0 — "not computed" and "computed as zero" are different facts.
-      fitness: f ? (f.fitness ?? f.score ?? null) : null,
-      why: f?.why ?? null,
-      concerns: f?.concerns ?? [],
-      judgedAt: f?.scoredAt ?? null,
-      fitnessModel: f?.model ?? null,
 
-      coverage: k ? (k.coverage ?? k.fitness ?? null) : null,
-      met: k?.met ?? null,
-      reqTotal: k?.total ?? null,
-      gaps: k?.gaps ?? [],
-      constraints: k?.constraints ?? [],
-      requirements: k?.requirements ?? [],
-
-      similarity: sv ? vec.dot(resumeV, vec.centre(sv.v, v.mu)) : null,
+      fitness: f?.fitness ?? null,
 
       state: applied.has(id) ? 'applied' : opened.has(id) ? 'opened'
            : queued.has(id) ? 'queued'
            : dismissed.has(id) ? 'dismissed' : staged.has(id) ? 'staged'
-           : (f || k) ? 'judged' : 'unseen',
+           : f ? 'judged' : 'unseen',
     });
   }
 
@@ -170,9 +152,9 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
   // what you are actually looking at, and re-scales when you change the filters.
   const scored = composite(rows);
 
-  // Ordered the way the page orders it. Sorting here by fitness and slicing the top
-  // N, while the page sorted what it got by value, meant every posting under two
-  // days old fell below the fitness cutoff and was never sent — the board's freshest
+  // Ordered the way the page orders it. Sorting here by a score (fitness, back then)
+  // and slicing the top N, while the page sorted what it got by value, meant every
+  // posting under two days old fell below the cutoff and was never sent — the board's freshest
   // row read two days old while seven newer ones sat on disk.
   scored.sort(byValue);
 
@@ -184,8 +166,6 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
     total: scored.length,
     counts: {
       fitness: scored.filter(r => r.fitness != null).length,
-      coverage: scored.filter(r => r.coverage != null).length,
-      similarity: scored.filter(r => r.similarity != null).length,
       value: scored.filter(r => r.value != null).length,
       queued: scored.filter(r => r.state === 'queued').length,
       applied: scored.filter(r => r.state === 'applied').length,
@@ -195,7 +175,7 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
   };
 }
 
-/** Stage a posting into fresh.jsonl so fitness.js / coverage.js pick it up next run. */
+/** Stage a posting into fresh.jsonl so fitness.js picks it up next run. */
 async function stage(id) {
   const c = corpusCached().get(id);
   if (!c) return { ok: false, error: 'not in the corpus' };
@@ -211,7 +191,7 @@ async function stage(id) {
     full = fetched;
   }
 
-  const line = JSON.stringify(asPosting(full, null, salaryOf)) + '\n';
+  const line = JSON.stringify(asPosting(full, salaryOf)) + '\n';
   fs.appendFileSync(P.fresh, line);
   return { ok: true, fetched: full !== c };
 }
@@ -245,19 +225,6 @@ function setDismissed(id, wanted) {
 }
 
 /**
- * Stage the n highest-similarity postings that still need scoring. This is what
- * `match --to-fresh` used to do; the board could only ever stage one at a time.
- */
-async function stageTop(n, opts) {
-  const picked = topUnscored(board({ ...opts, limit: 6000 }).jobs, n);
-  let staged = 0;
-  // Sequential on purpose: each miss is a network fetch, and this is a button a
-  // person pressed, not a batch job.
-  for (const j of picked) { const r = await stage(j.id); if (r.ok && !r.already) staged++; }
-  return { ok: true, staged, requested: n };
-}
-
-/**
  * Add or remove a posting from queue.jsonl — the only thing that ever writes it.
  * Scoring ranks; queueing is a decision, and decisions are made here by a person.
  */
@@ -265,12 +232,10 @@ function setQueued(id, wanted) {
   const queue = read(P.queue).filter(r => r.id !== id);
   if (!wanted) { writeJsonl(P.queue, queue); return { ok: true }; }
 
-  // Prefer the judged record; fall back to the raw posting so you can queue something
-  // on similarity alone, before fitness.js has ever looked at it.
-  const judged = read(P.fitness).filter(r => r.id === id)
-    .sort((a, b) => (a.scoredAt ?? '').localeCompare(b.scoredAt ?? '')).pop();
+  // The posting itself, in the shape apply.js reads. This used to prefer the fitness
+  // record, which carried the same posting fields plus the judgement.
   const c = corpusCached().get(id);
-  const row = judged ?? (c ? asPosting(c, null, salaryOf) : null);
+  const row = c ? asPosting(c, salaryOf) : null;
   if (!row) return { ok: false, error: 'nothing on record for that posting' };
 
   writeJsonl(P.queue, [...queue, row]);
@@ -304,20 +269,14 @@ const server = http.createServer((req, res) => {
     const c = corpusCached().get(id);
     if (!c) return send(404, 'application/json', JSON.stringify({ error: 'not in the corpus' }));
 
-    const f = newestById(read(P.fitness), 'scoredAt').get(id);
-    const k = newestById(read(P.coverage), 'at').get(id);
-    const p = asPosting(c, null, salaryOf);
+    const p = asPosting(c, salaryOf);
     return send(200, 'application/json', JSON.stringify(detailOf({
       description: tidy(c.description ?? ''),
-      requirements: k?.requirements ?? [],
-      why: f?.why ?? null,
-      concerns: f?.concerns ?? [],
-      gaps: k?.gaps ?? [],
-      constraints: k?.constraints ?? [],
+      // The sentence the pay column's figure came from, when it came from the text.
+      payText: p.salary ? null : (textPayOf(c)?.text ?? null),
       applyUrl: p.applyUrl, jobUrl: p.jobUrl,
       department: p.department, team: p.team,
-      workplaceType: p.workplaceType, employmentType: p.employmentType,
-      judgedAt: f?.scoredAt ?? null, fitnessModel: f?.model ?? null,
+      workplaceType: workplaceOf(c), employmentType: p.employmentType,
     })));
   }
 
@@ -339,13 +298,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && req.url === '/api/stage-top') {
-    readBody().then(({ n, us, remote, all }) => stageTop(Math.min(Number(n) || 25, 500), { us, remote, all }))
-      .then(r => send(200, 'application/json', JSON.stringify(r)))
-      .catch(e => send(400, 'application/json', JSON.stringify({ ok: false, error: e.message })));
-    return;
-  }
-
   if (req.method === 'POST' && req.url === '/api/stage') {
     readBody().then(({ id }) => stage(id))
       .then(r => send(200, 'application/json', JSON.stringify(r)))
@@ -360,8 +312,7 @@ server.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
   const b = board({ limit: 1 });
   console.log(`ashby ui on ${url}`);
-  console.log(`  ${b.total} postings · ${b.counts.fitness} with fitness · ` +
-              `${b.counts.coverage} with coverage · ${b.counts.similarity} with similarity`);
+  console.log(`  ${b.total} postings · ${b.counts.fitness} with fitness`);
   console.log('ctrl-c to stop');
   if (OPEN) spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
 });

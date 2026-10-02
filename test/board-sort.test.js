@@ -8,7 +8,7 @@ import { byValue } from '../lib/board-row.js';
 // seven newer ones sat on disk. A slice on one ordering cannot serve a view ordered
 // by another.
 
-const row = (o) => ({ value: null, fitness: null, similarity: null, ...o });
+const row = (o) => ({ value: null, fitness: null, ...o });
 
 test('orders by value, descending — the column the board actually sorts on', () => {
   const rows = [row({ value: 0.2 }), row({ value: 0.9 }), row({ value: 0.5 })];
@@ -19,7 +19,7 @@ test('a fresh low-fitness posting outranks a stale high-fitness one when value s
   const fresh = row({ value: 0.77, fitness: 0.20 });
   const stale = row({ value: 0.60, fitness: 0.85 });
   assert.deepEqual([stale, fresh].sort(byValue), [fresh, stale],
-    'sorting by fitness is what hid the fresh postings');
+    'sorting by a score instead of value is what once hid the fresh postings');
 });
 
 test('rows without a value fall to the back, not the front', () => {
@@ -29,15 +29,14 @@ test('rows without a value fall to the back, not the front', () => {
   assert.equal(sorted[2].value, null);
 });
 
-test('among rows with no value, fitness then similarity decide', () => {
+test('among rows with no value, fitness decides', () => {
   const rows = [
-    row({ value: null, fitness: null, similarity: 0.4 }),
-    row({ value: null, fitness: 0.7 }),
-    row({ value: null, fitness: null, similarity: 0.9 }),
+    row({ value: null, fitness: 0.4 }),
+    row({ value: null }),
+    row({ value: null, fitness: 0.9 }),
   ];
   const sorted = rows.sort(byValue);
-  assert.equal(sorted[0].fitness, 0.7, 'a judged posting beats an unjudged one');
-  assert.equal(sorted[1].similarity, 0.9);
+  assert.deepEqual(sorted.map(r => r.fitness), [0.9, 0.4, null], 'a scored posting beats an unscored one');
 });
 
 test('a zero value is not treated as missing', () => {

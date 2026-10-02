@@ -5,19 +5,17 @@
   "type": "module",
   "scripts": {
     "poll": "node bin/poll.js",
-    "score": "node bin/fitness.js && node bin/coverage.js && node bin/embed.js",
-    "fitness": "node bin/fitness.js",
-    "coverage": "node bin/coverage.js",
-    "similarity": "node bin/embed.js",
+    "score": "node bin/fitness.js",
     "ui": "node bin/ui.js",
     "apply": "node bin/apply.js",
-    "gaps": "node bin/gaps.js",
     "harvest": "node bin/harvest.js",
+    "levels": "node bin/levels.js",
     "test-fill": "node bin/test-fill.js",
     "check-docs": "node bin/check-docs.js",
     "test": "node --test test/",
     "test:watch": "node --test --watch test/",
-    "cost": "node bin/cost.js"
+    "cost": "node bin/cost.js",
+    "fitness": "node bin/fitness.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

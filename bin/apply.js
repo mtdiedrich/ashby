@@ -13,70 +13,17 @@
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
 import { atsOf, formSelectors } from '../lib/ats.js';
-import { declineIndex, isDemographic } from '../lib/decline.js';
+import { declineDemographics } from '../lib/decline.js';
 
 // The boards fill.browser.js has a DOM adapter for.
 const FILLABLE = new Set(['ashby', 'greenhouse']);
-
-/**
- * Decline Greenhouse's self-identification fields, from outside the page.
- *
- * These are react-select comboboxes, and react-select does not respond to the
- * synthesized pointer events fill.browser.js dispatches in-page — verified against a
- * live form, where the menu stayed shut, every field reported "no decline option
- * offered", and the four questions were left blank. Only a trusted click opens them,
- * and only Playwright can produce one.
- *
- * The matcher is the shared one, so there is exactly one definition of what counts
- * as declining. It requires an explicit verb of declining, which is what stops it
- * selecting "I am not a protected veteran" or "No, I do not have a disability" —
- * both of which would be this tool asserting something about the candidate.
- *
- * A field offering no way to decline is closed again and left EMPTY. A gap is the
- * correct outcome there; it is never filled with the nearest thing.
- */
-async function declineDemographics(page) {
-  const out = [];
-  const combos = page.locator('#application-form input[role=combobox]');
-  const n = await combos.count();
-
-  for (let i = 0; i < n; i++) {
-    const combo = combos.nth(i);
-    const id = await combo.getAttribute('id');
-    if (!id) continue;
-    const label = (await page.locator(`label[for="${id}"]`).first().textContent()
-      .catch(() => null))?.replace(/\s*\*\s*$/, '').trim() ?? '';
-    if (!isDemographic(label)) continue;
-    if ((await combo.inputValue().catch(() => '')).trim()) continue;
-
-    try {
-      await combo.scrollIntoViewIfNeeded();
-      await combo.click({ timeout: 5000 });
-      const options = page.locator(`#react-select-${id}-listbox [role="option"]`);
-      await options.first().waitFor({ state: 'visible', timeout: 5000 });
-      const texts = await options.allTextContents();
-      const k = declineIndex(texts.map(t => t.trim()));
-      if (k < 0) {
-        await page.keyboard.press('Escape');
-        out.push({ label, ok: false, err: 'no decline option offered — left empty' });
-        continue;
-      }
-      await options.nth(k).click({ timeout: 5000 });
-      out.push({ label, ok: true, value: texts[k].trim() });
-    } catch (e) {
-      await page.keyboard.press('Escape').catch(() => {});
-      out.push({ label, ok: false, err: String(e.message).split(String.fromCharCode(10))[0] });
-    }
-  }
-  return out;
-}
 
 import readline from 'node:readline';
 import { chromium } from 'playwright';
 import { z } from 'zod';
 import { ask, context, MODEL } from '../lib/ai.js';
 import { resumeBlock, resumeFile } from '../lib/resume.js';
-import { appliedIds, dropFromQueue } from '../lib/applog.js';
+import { appliedIds, dropFromQueue, answerEffect, SUBMITTED_PROMPT } from '../lib/applog.js';
 
 const readJsonl = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
@@ -184,9 +131,10 @@ for (const [i, job] of queue.entries()) {
   // would hand the model an empty field list, so it is still refused rather than
   // opened to produce a page of red and call it a result.
   //
-  // Not `job.ats ?? 'ashby'`: the queued row is the FITNESS row, and rowsFrom()
-  // never copied `ats`, so every Greenhouse posting read as Ashby here and hung 30s
-  // on [data-field-path]. atsOf() infers from the id prefix and the board host, so
+  // Not `job.ats ?? 'ashby'`: the queued row used to be the fitness row, and
+  // fitness's rowsFrom() never copied `ats`, so every Greenhouse posting read as
+  // Ashby here and hung 30s on [data-field-path]. Queue rows are built from the
+  // corpus now, but rows already on disk may not carry the field. atsOf() infers from the id prefix and the board host, so
   // rows already on disk without the field route correctly too.
   const ats = atsOf(job);
   if (!FILLABLE.has(ats)) {
@@ -301,30 +249,30 @@ for (const [i, job] of queue.entries()) {
   // fall through to "not submitted" and still write the record. Asking first means a
   // failure here would otherwise lose the whole record, which is what the old
   // write-then-ask order protected against.
-  const a = await prompt(
-    '\n  Submitted?  [y] yes · [n] no, move on · [k] not yet, keep it queued · [s] stop here: '
-  ).then(x => String(x).trim().toLowerCase())
-   .catch(() => { console.log('\n  (no answer possible — recording as not submitted)'); return 'n'; });
+  const answer = await prompt(SUBMITTED_PROMPT)
+    .catch(() => { console.log('\n  (no answer possible — recording as not submitted)'); return 'n'; });
+  const { submitted, keep, stop } = answerEffect(answer);
 
-  record.submitted = a === 'y';
+  record.submitted = submitted;
   if (record.submitted) record.submittedAt = new Date().toISOString();
 
   // Written per posting, not at the end of the run. Interrupting a run used to throw
   // away every queue removal, so the next run reopened everything already dealt with.
   fs.appendFileSync(P.log, JSON.stringify(record) + '\n');
 
-  // 'k' leaves it queued for next time; everything else is finished with.
-  if (!ONE_URL && a !== 'k') {
+  // [k] and [s] leave it queued for next time; everything else is finished with.
+  if (!ONE_URL && !keep) {
     const rest = dropFromQueue(readJsonl(P.queue), job.id);
     fs.writeFileSync(P.queue, rest.map(j => JSON.stringify(j)).join('\n') + (rest.length ? '\n' : ''));
     console.log(`  recorded${record.submitted ? ' as submitted' : ''} · ${rest.length} left in the queue`);
-  } else if (a === 'k') {
+  } else if (keep) {
     console.log('  left in the queue for next time');
   }
   done.push(job.id);
 
-  if (a !== 'k') await page.close().catch(() => {});
-  if (a === 's') break;
+  // [k] leaves the tab open to come back to; a stop closes the browser anyway.
+  if (!keep || stop) await page.close().catch(() => {});
+  if (stop) break;
 }
 
 const sent = done.length && fs.existsSync(P.log)

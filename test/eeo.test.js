@@ -156,6 +156,22 @@ test('greenhouse demographic labels are recognised as demographic', () => {
   }
 });
 
+// Gametime United's board (2026-09-25) asks six self-identification questions of its
+// own ahead of the federal block. Sexual orientation and transgender matched nothing,
+// so both would have been handed to the model to answer about the candidate.
+test('greenhouse: sexual orientation and transgender are self-identification', () => {
+  for (const label of [
+    'How would you describe your gender identity?',
+    'How would you describe your racial/ethnic background?',
+    'How would you describe your sexual orientation?',
+    'Do you identify as transgender?',
+    'Do you identify as LGBTQ+?',
+    'Are you a veteran or active member of the United States Armed Forces?',
+  ]) {
+    assert.equal(isDemographic(label), true, `should be demographic: ${label}`);
+  }
+});
+
 test('greenhouse non-demographic questions on the same form are not', () => {
   for (const label of [
     'Are you authorized to work in the country for which you applied? *',

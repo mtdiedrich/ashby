@@ -27,12 +27,6 @@ test('an explicit flag beats the fallback', () => {
 // keeps the spread (sd 0.236 vs 0.234) and the bottom-end discrimination that makes
 // fitness worth paying for, at 62% fewer output tokens: $9.30 against $14.08 to
 // rescore the whole corpus batched. high is a flag away when a run deserves it.
-test('fitness asks for low effort by default', () => {
-  const src = fs.readFileSync(new URL('../bin/fitness.js', import.meta.url), 'utf8');
-  assert.match(src, /effortFlag\(process\.argv,\s*'low'\)/,
-    'bin/fitness.js must default to low effort — high costs 51% more for scores ' +
-    'within 1.8x of the run-to-run noise floor');
-});
 
 test('a level is read off the flag', () => {
   for (const level of EFFORTS) {
