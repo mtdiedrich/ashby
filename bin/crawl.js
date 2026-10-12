@@ -198,4 +198,4 @@ if (closed.size) {
     process.stderr.write(`${r.after.toLocaleString()} kept, ${(r.bytesBefore / 1048576).toFixed(0)} MB → ${(r.bytesAfter / 1048576).toFixed(0)} MB\n`);
   }
 }
-if (fresh + changed) console.log(`\nNext: npm run fitness`);
+if (fresh + changed) console.log(`\nNext: npm run score`);

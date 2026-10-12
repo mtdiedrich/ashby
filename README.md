@@ -82,10 +82,11 @@ postings.
 npm run score
 ```
 
-Scores everything staged: one Jev call per posting asking whether you are qualified for
-it, about $0.00012 each. It skips what it has already answered, so re-running is free,
-and a posting stays on the worklist until it has been scored. `npm run score` and
-`npm run fitness` are the same command; `npm run fitness -- --dry` prices a run first.
+Scores everything staged: one Jev call per posting asking two questions — are you
+qualified for it, and is it the kind of work your resume shows — about $0.00012 each.
+It skips what it has already answered, so re-running is free, and a posting stays on
+the worklist until it has been scored. `npm run score -- --dry` prices a run first;
+`-- --limit N` scores only N, and `-- --jobs N` sends N requests at once (default 6).
 
 ```powershell
 npm run levels
@@ -108,7 +109,7 @@ npm run apply
 Opens each queued posting, fills what it can, and stops.
 
 PowerShell 5.1 has no `&&` — chain with `;`. Flags need npm's separator:
-`npm run fitness -- --dry`.
+`npm run score -- --dry`.
 
 ---
 
@@ -116,13 +117,16 @@ PowerShell 5.1 has no `&&` — chain with `;`. Flags need npm's separator:
 
 Every posting in one sortable table, `—` for anything not computed.
 
-**FITNESS**, the first column, is the one model score: Jev's answer to a single
-question — given the posting's title, company and whole description, and your resume,
-*is the candidate qualified for this job?* — as a probability. See **Fitness is the
-score** below for how it got there. Postings with no stored description are left blank
-rather than judged on a title.
+**qualified** and **aligned**, the first two columns, are the model scores: Jev's
+answers to two questions about the posting's title, company and whole description and
+your resume, each as a probability. **qualified** asks whether your resume meets the
+role — *is the candidate qualified for this job?* **aligned** asks the reverse, whether
+the role meets your resume — *is this the kind of work, domain and level the resume
+shows?* They part ways on a role far below your level, or a catch-all "join our talent
+community" page: qualified, not aligned. See **Fitness, both ways** below. Postings with
+no stored description are left blank rather than judged on a title.
 
-Click a row for its fitness, the pay sentence when pay came from the description, and
+Click a row for both scores, the pay sentence when pay came from the description, and
 the description itself. Buttons: **queue for application**, **send to scorers**,
 **not interested**.
 
@@ -178,15 +182,20 @@ has lost ground to everyone who applied first, and 200 versus 300 days is nothin
 absolute, so a posting does not become fresher because something older turned up beside
 it. `HALF_LIFE_DAYS` in `lib/composite.js` if you want it gentler.
 
-**value** — the geometric mean of fitness and fresh. Fitness is min-maxed across the
-rows currently shown first: it runs low (a mean of about 0.35) while freshness spans the
-whole of 0..1, so unscaled, freshness would quietly outweigh it. That makes the fitness
-half relative — the best fit in view counts as 1 — and it re-scales when you change the
-filters. Geometric, not average, so a posting has to be decent on both: a perfect fit
-listed months ago does not outrank a good match posted this week. This is the default
-sort; sort by **fitness** for the best matches regardless of age.
+**value** — the geometric mean of qualified, aligned and fresh. Each score is min-maxed
+across the rows currently shown first: they run low while freshness spans the whole of
+0..1, so unscaled, freshness would quietly outweigh them. That makes the score parts
+relative — the best in view counts as 1 — and they re-scale when you change the
+filters. Geometric, not average, so a posting has to be decent on all three: a role
+you are overqualified for does not outrank a real match, and a perfect fit listed
+months ago does not outrank a good one posted this week. With three parts freshness
+carries a third of the weight rather than half, so a stale posting is held back less
+than it was under the one-score value. This is the default sort; sort by
+**qualified** or **aligned** for the best matches regardless of age.
 
-Both are blank until their inputs exist; an unscored posting is unknown, not bad.
+Value is blank until all three exist — including for a posting scored before
+2026-10-12, which has a qualified answer and no aligned one until the next
+`npm run score`. An unscored posting is unknown, not bad.
 Parts are floored at 0.02 before the geometric mean, because min-max always puts the
 lowest row at exactly 0 and a geometric mean with a zero in it is zero — without the
 floor those rows collapse and lose every distinction below them.
@@ -205,8 +214,7 @@ fresher because something older turned up beside it. `HALF_LIFE_DAYS` in
 | Command | What it does |
 |---|---|
 | `npm run poll` | Fetch every board into `corpus.jsonl` and `descriptions.jsonl`, drop closed postings, rewrite `fresh.jsonl` with every US posting not yet scored. `--dry`, `--no-crawl`, `--limit N`, `--jobs N` (boards fetched at once, default 12), `--ats ashby|greenhouse` (fetch just one). |
-| `npm run score` | The same as `npm run fitness`. |
-| `npm run fitness` | Score the worklist: asks Jev whether you are qualified, given the whole posting and your resume, about $0.00012 each. `--dry` (price it), `--limit N`, `--force` (ask again even if answered), `--rescore` (ask again for every posting ever scored whose answer is to an older version of the question), `--jobs N` (requests at once, default 6). |
+| `npm run score` | Score the worklist: asks Jev two questions about each posting, given the whole posting and your resume — are you qualified for it, and is it the kind of work your resume shows — about $0.00012 each. `--dry` (price it), `--limit N` (score at most N), `--force` (ask again even if answered), `--rescore` (ask again for every posting ever scored whose answer is to an older version of the questions), `--jobs N` (requests at once, default 6). Was the `fitness` script until 2026-10-12. |
 | `npm run levels` | levels.fyi pay estimates for scored US postings that state no pay, in their pay field or their description. Display only. `--dry` (list the pages, fetch nothing), `--refresh` (ignore the 30-day memory), `--limit N` (at most N company pages), `--jobs N` (pages at once, default 1), `--delay MS` (wait between pages, default 1500 — levels.fyi has a bot check and stops the run when it trips). |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
 | `npm run cost` | What the model calls have cost, by what spends it. `--last` (the most recent run), `--runs` (one line per run), `--batch` (the same totals at the Batch API's 50%). |
@@ -242,13 +250,25 @@ it refused are **red**:
 - **Anything not answerable from `context.md`.** The model skips rather than guessing,
   because a plausible invented answer on a job application is worse than a gap.
 
-### Fitness is the score
+### Fitness, both ways
 
-One model score, from [Jev](https://docs.typesafe.ai) (TypeSafe AI): each posting's title,
-company and whole description, and your resume, with one yes/no question — *is the
-candidate qualified for this job?* — answered as a probability, about $0.00012 a posting.
+Two scores, from [Jev](https://docs.typesafe.ai) (TypeSafe AI), asked in one request per
+posting: its title, company and whole description, and your resume, with two yes/no
+questions answered as probabilities.
 
-It is the last of several. Embedding similarity, a Sonnet judgement of fit, a combined
+| | asks | low when |
+|---|---|---|
+| **qualified** (`fitness`) | *Based on their resume, the candidate is qualified for this job.* — does the resume meet the role | the resume falls short in experience, skills or level |
+| **aligned** (`alignment`) | *This job is a close match for the work the candidate's resume shows they do.* — does the role meet the resume | the role is unrelated, or far above or far below the resume's level |
+
+The second question costs almost nothing: the posting and resume are billed once per
+request, and adding it measured at 2% more input tokens (989 → 1,008). A run is still
+about $0.00012 a posting. On a sample of 24 real postings, qualified matched its old
+one-question answers within 0.01, while aligned took "AI Generalist (No Experience
+Required)" from 0.92 to 0.18, entry-level associate roles to 0.2–0.3 and catch-all
+talent-community pages to about 0.5, and kept real ML roles at 0.8–0.9.
+
+Qualified is the last of several single scores. Embedding similarity, a Sonnet judgement of fit, a combined
 `score`, and requirement coverage (Haiku extracting each posting's requirements, Jev
 asking whether the resume shows each one) were all dropped on 2026-10-02. Coverage went
 last, after 100 postings where it and fitness disagreed by 0.25 or more were judged by
@@ -258,9 +278,10 @@ in with generic ones anyone meets, and ran about a third of a point optimistic. 
 reads the posting whole; its weakness is running a little low on genuine fits, which
 the min-max scaling in `value` absorbs.
 
-Answers are cached per description, resume and version of the question. The version
-changed when the extracted requirements left the question, so `npm run fitness --
---rescore` asks again for everything scored before that. Jev's spend is printed by the
+Answers are cached per description, resume and version of the questions. The version
+changed when the second question was added (2026-10-12), so every posting answered
+before then is back on the worklist and the next `npm run score` asks it both;
+`--rescore` asks again for everything scored under an older version. Jev's spend is printed by the
 command itself; `npm run cost` only counts Anthropic calls.
 
 Their data files were deleted the same day.
@@ -432,6 +453,7 @@ interrupt keeps everything you already dealt with.
 | `n` | logged, dropped from the queue, shows **opened** — seen, not sent |
 | `k` | stays in the queue and the tab stays open, so the next run reopens it |
 | `s` | stops the run; this posting stays in the queue along with the rest |
+| anything else | not an answer: it says so and asks again. It used to count as `n`, so a typo dropped the posting from the queue. |
 
 The board separates the two: **submitted** means you said yes. Opening a form and
 closing it used to count as applying, which made the board claim applications that
@@ -582,7 +604,7 @@ crawl still stores non-US postings, so widening this needs no re-fetch. To narro
 further, use the board's toggles, score ranges and search box — they hide rows, they
 never stop anything being scored.
 
-**Re-scoring everything** — `npm run fitness -- --rescore --force` asks again for every
+**Re-scoring everything** — `npm run score -- --rescore --force` asks again for every
 posting ever scored.
 
 **Model** — `apply` asks `claude-opus-5` by default: `$env:ASHBY_MODEL = "claude-sonnet-5"`.
@@ -664,7 +686,7 @@ work from any directory.
 | `corpus.jsonl` | Every posting from every board, unfiltered — metadata, plus `descPay`, the pay its description states. The only store of postings. |
 | `descriptions.jsonl` | Every posting's description, one row per posting and content hash, newest wins. Written by the crawl (and by the board's stage button for a posting it lacks); read by `fitness` and the board's expanded row, by byte offset. |
 | `fresh.jsonl` | The worklist: every US posting not yet scored, without descriptions. Rewritten by `poll`, read by every scorer, consumed by none. |
-| `jev-fitness.jsonl` | The score: Jev's probability that you are qualified, per posting, resume version and version of the question. Written by `npm run fitness`; read by the board, `poll` and `levels`. Newest per posting wins. |
+| `jev-fitness.jsonl` | The scores: Jev's probabilities that you are qualified (`fitness`) and that the role is aligned with your resume (`alignment`), per posting, resume version and version of the questions. Rows from before 2026-10-12 carry `fitness` only. Written by `npm run score`; read by the board, `poll` and `levels`. Newest per posting wins. |
 | `queue.jsonl` | What you picked. The only input to `apply`. |
 | `dismissed.jsonl` | What you said no to. |
 | `pay-estimates.jsonl` | levels.fyi estimates from `npm run levels`, one line per posting looked up — misses included, so they are not asked again for 30 days. Newest per posting wins. Read by the board only. |

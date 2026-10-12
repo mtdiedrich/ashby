@@ -195,7 +195,7 @@ test('only scored, unpaid, US postings with a known family need an estimate', ()
 // ---- display only ----------------------------------------------------------------
 
 test('nothing that selects or scores reads the estimates', () => {
-  for (const f of ['lib/select.js', 'lib/comp.js', 'lib/filters.js', 'bin/poll.js', 'bin/fitness.js']) {
+  for (const f of ['lib/select.js', 'lib/comp.js', 'lib/filters.js', 'bin/poll.js', 'bin/score.js']) {
     const src = fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /payEstimates|levels\.js|payEst\b/, `${f} must not read pay estimates`);
   }

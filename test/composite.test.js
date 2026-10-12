@@ -58,52 +58,68 @@ test('freshness is absolute — one ancient posting cannot compress the rest', (
   assert.equal(a[0].fresh, b[0].fresh);
 });
 
-// ---- value: the geometric mean of scaled fitness and freshness ---------------------
+// ---- value: the geometric mean of scaled qualified, scaled aligned, and freshness --
 //
-// Fitness is the only model score (2026-10-02). It replaced coverage after 100 postings
-// where the two disagreed by 0.25+ were judged by hand: fitness was closer in 90, with
-// mean error 0.08 against coverage's 0.35. Fitness is min-maxed across the rows shown
-// before it is combined, so its tendency to run low does not let freshness outweigh it.
+// Two Jev answers since 2026-10-12, asked in one request: `fitness` — is the candidate
+// qualified for the job (does the resume meet the role) — and `alignment` — is the job
+// a close match for the work the resume shows (does the role meet the resume). They
+// differ on a role far below the candidate's level: qualified, not aligned. Each is
+// min-maxed across the rows shown before it is combined, so a model score that runs
+// low does not let freshness outweigh it.
 
-test('a best-fitting, brand-new posting is worth 1', () => {
-  const [row] = composite([{ fitness: 0.6, daysLive: 0 }]);
-  assert.equal(row.value, 1);
+const row = (fitness, alignment, daysLive) => ({ fitness, alignment, daysLive });
+
+test('a best-fitting, best-aligned, brand-new posting is worth 1', () => {
+  const [r] = composite([row(0.6, 0.7, 0)]);
+  assert.equal(r.value, 1);
 });
 
-test('value is the geometric mean of scaled fitness and freshness', () => {
-  const out = composite([{ fitness: 0.1, daysLive: 0 }, { fitness: 0.7, daysLive: HALF_LIFE_DAYS }]);
-  // row 1: nFitness 1, fresh 0.5 -> sqrt(0.5)
-  assert.equal(out[1].value, Number(Math.sqrt(0.5).toFixed(3)));
+test('value is the geometric mean of scaled qualified, scaled aligned and freshness', () => {
+  const out = composite([row(0.1, 0.2, 0), row(0.7, 0.9, HALF_LIFE_DAYS)]);
+  // row 1: nFitness 1, nAlignment 1, fresh 0.5 -> cbrt(0.5)
+  assert.equal(out[1].value, Number(Math.cbrt(0.5).toFixed(3)));
 });
 
-test('fitness is scaled across the rows shown', () => {
-  const out = composite([{ fitness: 0.2, daysLive: 0 }, { fitness: 0.6, daysLive: 0 }, { fitness: 0.4, daysLive: 0 }]);
+test('each score is scaled across the rows shown, separately', () => {
+  const out = composite([row(0.2, 0.9, 0), row(0.6, 0.1, 0), row(0.4, 0.5, 0)]);
   assert.deepEqual(out.map(r => Number(r.nFitness.toFixed(6))), [0, 1, 0.5]);
+  assert.deepEqual(out.map(r => Number(r.nAlignment.toFixed(6))), [1, 0, 0.5]);
 });
 
-test('weak on either side drags value down — the point of a geometric mean', () => {
+test('qualified but not aligned ranks below both — the point of asking both ways', () => {
+  const [overqualified, match] = composite([row(0.9, 0.1, 0), row(0.8, 0.8, 0), row(0.1, 0.1, 0)]);
+  assert.ok(overqualified.value < match.value * 0.5);
+});
+
+test('weak on any side drags value down — the point of a geometric mean', () => {
   const [middling, ancient] = composite([
-    { fitness: 0.5, daysLive: HALF_LIFE_DAYS },
-    { fitness: 0.9, daysLive: 999 },
-    { fitness: 0.1, daysLive: 0 },
+    row(0.5, 0.5, HALF_LIFE_DAYS),
+    row(0.9, 0.9, 999),
+    row(0.1, 0.1, 0),
   ]);
-  assert.ok(ancient.value < middling.value * 0.5);
+  // middling: 0.5 on all three. ancient: perfect on both scores, freshness floored at
+  // 0.02 — cbrt(0.02) ≈ 0.27. With three parts freshness carries a third of the weight,
+  // not half (two-part: 0.14), so staleness drags less than it did; it still loses.
+  assert.equal(middling.value, 0.5);
+  assert.equal(ancient.value, Number(Math.cbrt(0.02).toFixed(3)));
+  assert.ok(ancient.value < middling.value);
 });
 
 test('nothing collapses to exactly zero, so ordering survives', () => {
-  const out = composite([{ fitness: 0.1, daysLive: 0 }, { fitness: 0.1, daysLive: 30 }, { fitness: 0.9, daysLive: 0 }]);
+  const out = composite([row(0.1, 0.1, 0), row(0.1, 0.1, 30), row(0.9, 0.9, 0)]);
   assert.ok(out[0].value > 0);
   assert.ok(out[0].value > out[1].value);
 });
 
-test('value is null when fitness is missing, or the age is', () => {
-  assert.equal(composite([{ fitness: null, daysLive: 5 }])[0].value, null);
-  assert.equal(composite([{ fitness: 0.5, daysLive: null }])[0].value, null);
+test('value is null when either answer is missing, or the age is', () => {
+  assert.equal(composite([row(null, 0.5, 5)])[0].value, null);
+  assert.equal(composite([row(0.5, null, 5)])[0].value, null, 'a one-question answer from before 2026-10-12');
+  assert.equal(composite([row(0.5, 0.5, null)])[0].value, null);
 });
 
 test('coverage on a row changes nothing — it was dropped', () => {
-  const a = composite([{ fitness: 0.4, daysLive: 1 }, { fitness: 0.9, daysLive: 3 }]);
-  const b = composite([{ fitness: 0.4, coverage: 0.9, daysLive: 1 }, { fitness: 0.9, coverage: 0.1, daysLive: 3 }]);
+  const a = composite([row(0.4, 0.4, 1), row(0.9, 0.9, 3)]);
+  const b = composite([{ ...row(0.4, 0.4, 1), coverage: 0.9 }, { ...row(0.9, 0.9, 3), coverage: 0.1 }]);
   assert.deepEqual(a.map(r => r.value), b.map(r => r.value));
   assert.equal('nCoverage' in b[0], false);
 });
@@ -115,7 +131,7 @@ test('an empty set does not throw', () => {
 // Math.min(...values) spreads every value onto the stack, and threw RangeError past
 // ~120,000 rows. Scoring every posting puts ~225,000 fitness values on the board.
 test('min-max works over every posting in the corpus, not just a filtered few', () => {
-  const rows = Array.from({ length: 250_000 }, (_, i) => ({ id: String(i), fitness: (i % 100) / 100, daysLive: i % 30 }));
+  const rows = Array.from({ length: 250_000 }, (_, i) => ({ id: String(i), fitness: (i % 100) / 100, alignment: (i % 7) / 7, daysLive: i % 30 }));
   const out = composite(rows);
   assert.equal(out.length, 250_000);
   assert.ok(out.some(r => r.value != null));

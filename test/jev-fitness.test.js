@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { fitnessRequest, fitnessKey, jdTextOf, worklistWork, rescoreWork, fitnessRow, FITNESS_VERSION }
+import { fitnessRequest, fitnessKey, jdTextOf, worklistWork, rescoreWork, fitnessRow, FITNESS_VERSION, answeredIds }
   from '../lib/jev-fitness.js';
 
 // Fitness: Jev is handed the posting — title, company, whole description — and the
@@ -15,11 +15,18 @@ import { fitnessRequest, fitnessKey, jdTextOf, worklistWork, rescoreWork, fitnes
 const posting = { id: 'p1', title: 'Senior ML Engineer', slug: 'acme', location: 'Remote',
                   descriptionPlain: 'We build models.\nYou will ship them.' };
 
-test('one noul question: is the candidate qualified for this job', () => {
+// Two questions since 2026-10-12, in one request — the posting and resume are billed
+// once per request, so the second costs ~2% more (measured: 989 → 1,008 input tokens).
+test('two noul questions: does the resume meet the role, and does the role meet the resume', () => {
   const { questions } = fitnessRequest(posting, 'RESUME TEXT');
-  assert.deepEqual(Object.keys(questions), ['qualified']);
-  assert.equal(questions.qualified.type, 'noul');
+  assert.deepEqual(Object.keys(questions), ['qualified', 'aligned']);
+  for (const q of Object.values(questions)) assert.equal(q.type, 'noul');
   assert.match(questions.qualified.instructions, /qualified/i);
+  assert.equal(questions.qualified.instructions, 'Based on their resume, the candidate is qualified for this job.',
+    'unchanged, so its answers stay comparable with the 67,000 already given');
+  assert.match(questions.aligned.instructions, /resume/i);
+  // What makes it a different question: a role far below the resume's level is not aligned.
+  assert.match(questions.aligned.criteria.false, /below/i);
 });
 
 test('the state is the posting and the resume — no extracted requirements', () => {
@@ -78,14 +85,33 @@ test('rescore: every posting already scored, once, if its answer is an older ver
   assert.deepEqual(work.map(w => w.id), ['a']);
 });
 
-test('a row records the probability and the versioned key', () => {
-  const r = fitnessRow({ id: 'p1', jdHash: 'jd' }, 'rh', { model: 'jev-1.13.0', answers: { qualified: { noul: 0.42 } } });
-  assert.deepEqual([r.id, r.key, r.fitness, r.model], ['p1', fitnessKey('jd', 'rh'), 0.42, 'jev-1.13.0']);
+test('a row records both probabilities and the versioned key', () => {
+  const r = fitnessRow({ id: 'p1', jdHash: 'jd' }, 'rh',
+    { model: 'jev-1.13.0', answers: { qualified: { noul: 0.42 }, aligned: { noul: 0.7 } } });
+  assert.deepEqual([r.id, r.key, r.fitness, r.alignment, r.model], ['p1', fitnessKey('jd', 'rh'), 0.42, 0.7, 'jev-1.13.0']);
   assert.throws(() => fitnessRow({ id: 'p1', jdHash: 'jd' }, 'rh', { answers: {} }), /no answer/);
+  assert.throws(() => fitnessRow({ id: 'p1', jdHash: 'jd' }, 'rh', { answers: { qualified: { noul: 0.4 } } }), /no answer/,
+    'half an answer is not written — it would count as scored');
+});
+
+// finished() looks postings up by id. An answer to the one-question version must not
+// count, or the 67,000 postings scored before 2026-10-12 never get asked the second
+// question and never get a value.
+test('answeredIds: only rows that answer both questions of the current version', () => {
+  const rows = [
+    { id: 'old', fitness: 0.5, version: 'posting-only' },
+    { id: 'both', fitness: 0.5, alignment: 0.6, version: FITNESS_VERSION },
+    { id: 'half', fitness: 0.5, version: FITNESS_VERSION },
+  ];
+  assert.deepEqual([...answeredIds(rows)], ['both']);
+});
+
+test('the version changed, so one-question answers are due again', () => {
+  assert.notEqual(FITNESS_VERSION, 'posting-only');
 });
 
 test('nothing reads requirement coverage any more', () => {
-  for (const f of ['lib/composite.js', 'lib/select.js', 'bin/poll.js', 'bin/ui.js', 'bin/levels.js', 'bin/fitness.js', 'lib/jev-fitness.js']) {
+  for (const f of ['lib/composite.js', 'lib/select.js', 'bin/poll.js', 'bin/ui.js', 'bin/levels.js', 'bin/score.js', 'lib/jev-fitness.js']) {
     const src = fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /P\.coverage|P\.requirements|coverage-score|coverage-plan/, f);
   }
@@ -118,7 +144,7 @@ test('a posting already answered under its own id is neither work nor reuse', ()
 });
 
 test('the fitness command writes re-listing copies, before its "nothing to do" exit', () => {
-  const src = fs.readFileSync(new URL('../bin/fitness.js', import.meta.url), 'utf8');
+  const src = fs.readFileSync(new URL('../bin/score.js', import.meta.url), 'utf8');
   const write = src.indexOf('appendRows(P.jevFitness, reuse)');
   assert.ok(write > 0, 'reuse rows are appended');
   const exit = src.indexOf('nothing to do');

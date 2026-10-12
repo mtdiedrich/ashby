@@ -12,8 +12,8 @@ only looked for `.jsonl/.json/.txt`, and every scoring run then died on it. Ever
 scripts work from any working directory and a file can be moved in one place. Add new
 files to `P` there rather than hardcoding them.
 
-Commands are npm scripts: `npm run poll`, `npm run fitness`, `npm run ui`. Flags need
-the separator — `npm run fitness -- --dry`.
+Commands are npm scripts: `npm run poll`, `npm run score`, `npm run ui`. Flags need
+the separator — `npm run score -- --dry`.
 
 Job-search tooling over Ashby-hosted boards. Two pipelines; `README.md` explains both.
 
@@ -56,7 +56,7 @@ Run `npm test` before reporting work finished.
 
 ## Never import a script to inspect it
 
-ESM executes on import. `import('../bin/fitness.js')` runs the scorer and spends
+ESM executes on import. `import('../bin/score.js')` runs the scorer and spends
 money. To check a script loads, run it with a harmless flag (`--dry`, `--show`,
 `--stats`) or `node --check`. This has already cost an unasked-for $0.58.
 
@@ -156,7 +156,7 @@ and then "0 scored" — the only honest line was the zero.
 
 ## Money
 
-`apply.js` costs Anthropic tokens per posting. `fitness.js` calls Jev (TypeSafe AI,
+`apply.js` costs Anthropic tokens per posting. `bin/score.js` calls Jev (TypeSafe AI,
 `JEV_API_KEY`) — about $0.00012 a posting, and not counted by `npm run cost`, which reads
 only Anthropic usage. Say what a run will cost before starting a large one, and prefer `--dry`,
 `--keep`, and `--no-model` when testing.
@@ -168,18 +168,23 @@ yet `finished`, so **a posting counted as finished while a score is still missin
 never acquire that score** — it is gone from the only list anything consults.
 
 `finished()` in `lib/select.js` therefore requires every front. There is one now:
-Jev's fitness (`bin/fitness.js`, `lib/jev-fitness.js`, `jev-fitness.jsonl`). When
+Jev's fitness (`bin/score.js`, `lib/jev-fitness.js`, `jev-fitness.jsonl`) — one
+request asking two questions since 2026-10-12, `qualified` (→ `fitness`) and
+`aligned` (→ `alignment`). poll passes `answeredIds()`, which counts only rows with
+both answers at the current `FITNESS_VERSION`; counting a one-question row as done
+would leave it without `alignment`, and so without `value`, forever. When
 there were three it once checked only two, which stranded 15 postings with no vector,
 and so no `score` and no `value` — visible on the board and permanently unrankable.
 
 Everything else was dropped on 2026-10-02: embedding similarity, a Sonnet fitness
 judgement, a combined `score`, and requirement coverage with its Haiku extraction,
 `npm run gaps` and the Batch API. Coverage went after 100 hand-judged postings where
-fitness was closer in 90 (see `lib/jev-fitness.js`). Their data files were deleted. `value` is the geometric mean of min-maxed fitness and freshness.
+fitness was closer in 90 (see `lib/jev-fitness.js`). Their data files were deleted. `value` is the geometric mean of min-maxed fitness, min-maxed alignment and
+freshness, and is null unless all three exist.
 
 **Fitness caches by content but `finished()` looks up by id.** A re-listed posting —
 new id, identical description — has an answer and no finished id. `worklistWork`
-copies the answer to the new id (`reuse`), and `bin/fitness.js` writes those copies
+copies the answer to the new id (`reuse`), and `bin/score.js` writes those copies
 before its "nothing to do" exit. Coverage once had the same bug; dropping it must not
 bring it back.
 

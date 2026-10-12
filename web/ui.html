@@ -131,9 +131,10 @@
 <table>
   <thead>
     <tr>
-      <th data-s="fitness" title="Jev's answer to one question, given the whole posting and your resume: is the candidate qualified for this job? Probability of yes. The score value is built on.">fitness <span class="caret">▾</span></th>
+      <th data-s="fitness" title="Jev: does your resume meet this role — are you qualified for it? Probability of yes, from the whole posting and your resume.">qualified <span class="caret">▾</span></th>
+      <th data-s="alignment" title="Jev: does this role meet your resume — is it the kind of work, domain and level your resume shows? Low for a role far below your level even when you are qualified. Probability of yes.">aligned <span class="caret">▾</span></th>
       <th data-s="fresh" title="How much of its value the posting still has. Halves every 7 days: listed today 1.00, a week old 0.50, a month 0.05.">fresh <span class="caret">▾</span></th>
-      <th data-s="value" class="sorted" title="Geometric mean of fitness (min-maxed across the rows shown) and fresh — how good the match is, and whether it is still worth chasing. Weak on either drags it down. Blank until both exist.">value <span class="caret">▾</span></th>
+      <th data-s="value" class="sorted" title="Geometric mean of qualified and aligned (each min-maxed across the rows shown) and fresh — a match in both directions, and still worth chasing. Weak on any one drags it down. Blank until all three exist.">value <span class="caret">▾</span></th>
       <th data-s="state">state <span class="caret">▾</span></th>
       <th data-s="title">title <span class="caret">▾</span></th>
       <th data-s="slug">company <span class="caret">▾</span></th>
@@ -141,7 +142,7 @@
       <th data-s="payNum">pay <span class="caret">▾</span></th>
     </tr>
     <tr class="ranges" title="Show only rows inside these bounds (inclusive). A row with no value for a bounded column is hidden.">
-      <th data-r="fitness"></th><th data-r="fresh"></th><th data-r="value"></th>
+      <th data-r="fitness"></th><th data-r="alignment"></th><th data-r="fresh"></th><th data-r="value"></th>
       <th><button class="tab" id="clearranges" hidden>clear ranges</button></th>
       <th></th><th></th><th></th><th></th>
     </tr>
@@ -183,15 +184,15 @@ async function load() {
   try { d = await (await fetch('/api/board?' + q)).json(); }
   catch {
     document.getElementById('rows').innerHTML =
-      '<tr><td colspan="8" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
+      '<tr><td colspan="9" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
     return;
   }
 
   JOBS = d.jobs.map(j => ({ ...j, payNum: parseTop(j.pay) }));
   TOTAL = d.total;
   document.getElementById('stamp').textContent =
-    d.total + ' postings · ' + d.counts.fitness +
-    ' fitness · ' + d.counts.value + ' ranked · ' + d.counts.queued + ' queued · ' + d.counts.applied + ' submitted';
+    d.total + ' postings · ' + d.counts.fitness + ' scored · ' +
+    d.counts.alignment + ' both ways · ' + d.counts.value + ' ranked · ' + d.counts.queued + ' queued · ' + d.counts.applied + ' submitted';
   painted = PAINT_STEP;
   render();
 }
@@ -212,7 +213,7 @@ function updateMore(shown, matching) {
 //
 // Remembered in this browser only. Storage can be unavailable (private window,
 // blocked site data), and then the ranges simply start empty.
-const RANGE_KEYS = ['fitness', 'fresh', 'value'];
+const RANGE_KEYS = ['fitness', 'alignment', 'fresh', 'value'];
 const RANGE_STORE = 'ashby.ranges';
 let ranges = {};
 try { ranges = JSON.parse(localStorage.getItem(RANGE_STORE) || '{}') || {}; } catch { ranges = {}; }
@@ -296,7 +297,7 @@ function render() {
   const all = visible();
   const body = document.getElementById('rows');
   if (!all.length) {
-    body.innerHTML = '<tr><td colspan="8" class="empty">' +
+    body.innerHTML = '<tr><td colspan="9" class="empty">' +
       (JOBS.length && anyRange() ? 'nothing inside these ranges' : 'nothing here') + '</td></tr>';
     updateMore(0, 0);
     return;
@@ -310,6 +311,7 @@ function render() {
 
     return '<tr class="r" data-id="' + esc(j.id) + '">' +
         '<td class="num ' + cls(j.fitness) + '">' + num(j.fitness) + '</td>' +
+        '<td class="num ' + cls(j.alignment) + '">' + num(j.alignment) + '</td>' +
         '<td class="num ' + (j.fresh == null ? 'none' : cls(j.fresh)) + '">' +
           (j.fresh == null ? '—' : j.fresh.toFixed(2)) +
           (j.daysLive == null ? '' : '<span class="sub">' + j.daysLive + 'd</span>') + '</td>' +
@@ -321,7 +323,7 @@ function render() {
         '<td class="loc">' + esc(j.location || '?') + '</td>' +
         payCell(j) +
       '</tr>' +
-      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="8"></td></tr>';
+      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="9"></td></tr>';
   }).join('');
 }
 
@@ -332,10 +334,14 @@ function render() {
  * every keystroke in the search box.
  */
 function paneHtml(j, d) {
+  const scoreLine = (v, what) => '<p class="fitline"><b class="' + cls(v) + '">' + v.toFixed(2) + '</b> ' +
+      '<span class="meta">' + what + '</span></p>';
   const fitLine = j.fitness == null
-    ? '<p class="meta fitline">Not scored yet — send it to the scorers, then run <b>npm run fitness</b>.</p>'
-    : '<p class="fitline"><b class="' + cls(j.fitness) + '">' + j.fitness.toFixed(2) + '</b> ' +
-      '<span class="meta">Jev\'s probability that you are qualified for this job, from the posting and your resume.</span></p>';
+    ? '<p class="meta fitline">Not scored yet — send it to the scorers, then run <b>npm run score</b>.</p>'
+    : scoreLine(j.fitness, 'qualified — Jev\'s probability that your resume meets this role.') +
+      (j.alignment == null
+        ? '<p class="meta fitline">aligned — not asked yet; the next <b>npm run score</b> asks it.</p>'
+        : scoreLine(j.alignment, 'aligned — Jev\'s probability that this role is the kind of work your resume shows.'));
 
   const act = j.state === 'applied'
     ? '<span class="meta">submitted</span>'
@@ -354,7 +360,7 @@ function paneHtml(j, d) {
 
   return '<div class="panes">' +
       '<div class="pane">' +
-        '<h4>Fitness — qualified for this job?</h4>' + fitLine +
+        '<h4>Fit, both ways</h4>' + fitLine +
         (d.payText ? '<h4>Pay, from the description</h4><p class="meta paytext">' + esc(d.payText) + '</p>' : '') +
         '<div class="acts">' + act + stageBtn + dismissBtn +
           (d.applyUrl ? '<a class="lnk" href="' + esc(d.applyUrl) + '" target="_blank" rel="noopener">application ↗</a>' : '') +
@@ -428,7 +434,7 @@ for (const th of document.querySelectorAll('thead th[data-s]')) {
   th.addEventListener('click', () => {
     const k = th.dataset.s;
     if (sortKey === k) sortDir = -sortDir;
-    else { sortKey = k; sortDir = ['fitness', 'fresh', 'value', 'payNum'].includes(k) ? -1 : 1; }
+    else { sortKey = k; sortDir = ['fitness', 'alignment', 'fresh', 'value', 'payNum'].includes(k) ? -1 : 1; }
     for (const o of document.querySelectorAll('thead th')) o.classList.remove('sorted');
     th.classList.add('sorted');
     th.querySelector('.caret').textContent = sortDir === -1 ? '▾' : '▴';

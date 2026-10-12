@@ -23,7 +23,7 @@ import { chromium } from 'playwright';
 import { z } from 'zod';
 import { ask, context, MODEL } from '../lib/ai.js';
 import { resumeBlock, resumeFile } from '../lib/resume.js';
-import { appliedIds, dropFromQueue, answerEffect, SUBMITTED_PROMPT } from '../lib/applog.js';
+import { appliedIds, dropFromQueue, askSubmitted } from '../lib/applog.js';
 
 const readJsonl = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
@@ -115,7 +115,17 @@ const ctx = await chromium.launchPersistentContext(P.profile, {
 }));
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const prompt = q => new Promise(r => rl.question(q, r));
+// Rejects when stdin closes. rl.question alone never settles once input has ended, so
+// the "no answer possible" fallback in askSubmitted() could not fire and a run with
+// closed or piped input hung on its first prompt.
+let stdinClosed = false;
+rl.on('close', () => { stdinClosed = true; });
+const prompt = q => new Promise((resolve, reject) => {
+  if (stdinClosed) return reject(new Error('stdin closed'));
+  const onClose = () => reject(new Error('stdin closed'));
+  rl.once('close', onClose);
+  rl.question(q, a => { rl.off('close', onClose); resolve(a); });
+});
 
 const done = [];
 
@@ -249,9 +259,8 @@ for (const [i, job] of queue.entries()) {
   // fall through to "not submitted" and still write the record. Asking first means a
   // failure here would otherwise lose the whole record, which is what the old
   // write-then-ask order protected against.
-  const answer = await prompt(SUBMITTED_PROMPT)
-    .catch(() => { console.log('\n  (no answer possible — recording as not submitted)'); return 'n'; });
-  const { submitted, keep, stop } = answerEffect(answer);
+  // An invalid key is asked again, never read as [n] — see askSubmitted().
+  const { submitted, keep, stop } = await askSubmitted(prompt, m => console.log(m));
 
   record.submitted = submitted;
   if (record.submitted) record.submittedAt = new Date().toISOString();

@@ -1,16 +1,20 @@
-// Fitness — the score: is the candidate qualified for this job, asked of Jev.
+// The scorer: two questions about each staged posting, asked of Jev.
 //
-//   npm run fitness              score everything staged in fresh.jsonl
-//   npm run fitness -- --dry     price it, call nothing
-//   npm run fitness -- --limit 20
-//   npm run fitness -- --force   ask again even if answered
-//   npm run fitness -- --rescore ask again for every posting ever scored whose answer
-//                                is to an older version of the question
-//   npm run fitness -- --jobs 6  requests at once (default 6)
+//   npm run score              score everything staged in fresh.jsonl
+//   npm run score -- --dry     price it, call nothing
+//   npm run score -- --limit 20
+//   npm run score -- --force   ask again even if answered
+//   npm run score -- --rescore ask again for every posting ever scored whose answer
+//                              is to an older version of the questions
+//   npm run score -- --jobs 6  requests at once (default 6)
 //
 // One Jev request per posting: its title, company and whole description, and the
-// resume, with one yes/no question. P(yes) is fitness, and value is the geometric mean
-// of it (scaled) and freshness. See lib/jev-fitness.js for why it is the only score.
+// resume, with two yes/no questions — qualified (resume → role, stored as `fitness`)
+// and aligned (role → resume, stored as `alignment`). value is the geometric mean of
+// both (scaled) and freshness. See lib/jev-fitness.js.
+//
+// This was bin/fitness.js, the `fitness` npm script, until 2026-10-12. The data keeps
+// the old name — jev-fitness.jsonl — because renaming it would orphan every answer.
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';

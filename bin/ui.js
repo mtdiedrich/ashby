@@ -4,9 +4,11 @@
 //   node ui.js --port N   different port
 //   node ui.js --no-open  don't launch a browser
 //
-// One model score per posting:
+// Two model scores per posting:
 //
-//   fitness     fitness.js   is the candidate qualified for this job — Jev's answer,
+//   fitness     score.js     is the candidate qualified for this job (resume → role)
+//   alignment   score.js     is this job a close match for the resume (role → resume);
+//                            both are Jev's answers, asked in one request,
 //                            given the whole posting and the resume
 //
 // combined with freshness into `value`, the default sort. (Embedding similarity, a
@@ -152,6 +154,8 @@ function board({ remote = false, scoredOnly = false, limit = 5000 } = {}) {
       // null, not 0 — "not computed" and "computed as zero" are different facts.
 
       fitness: f?.fitness ?? null,
+      // Since 2026-10-12; null on an answer to the one-question version, until re-asked.
+      alignment: f?.alignment ?? null,
 
       state: applied.has(id) ? 'applied' : opened.has(id) ? 'opened'
            : queued.has(id) ? 'queued'
@@ -178,6 +182,7 @@ function board({ remote = false, scoredOnly = false, limit = 5000 } = {}) {
     total: scored.length,
     counts: {
       fitness: scored.filter(r => r.fitness != null).length,
+      alignment: scored.filter(r => r.alignment != null).length,
       value: scored.filter(r => r.value != null).length,
       queued: scored.filter(r => r.state === 'queued').length,
       applied: scored.filter(r => r.state === 'applied').length,
@@ -187,7 +192,7 @@ function board({ remote = false, scoredOnly = false, limit = 5000 } = {}) {
   };
 }
 
-/** Stage a posting into fresh.jsonl so fitness.js picks it up next run. */
+/** Stage a posting into fresh.jsonl so score.js picks it up next run. */
 async function stage(id) {
   const c = corpusCached().get(id);
   if (!c) return { ok: false, error: 'not in the corpus' };
