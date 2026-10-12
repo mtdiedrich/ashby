@@ -1,90 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { wantedTitle, usLocation } from '../lib/filters.js';
-
-test('wantedTitle accepts the role shapes we are looking for', () => {
-  for (const t of [
-    'Machine Learning Engineer', 'ML Engineer', 'Senior MLOps Engineer',
-    'ML Ops Infrastructure Engineer', 'LLM Engineer', 'AI Engineer',
-    'ML Infrastructure Engineer',
-    'Systems Architect AI/ML Infrastructure', 'Computer Vision Engineer',
-    'Deep Learning Engineer', 'NLP Engineer', 'Applied AI Engineer',
-  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
-});
-
-// Dropped from WANT: they matched too much that was not the job. A bare "Research
-// Engineer" is a research-lab title, "Applied Scientist" is Amazon's name for a
-// research role, and "Foundation Model" reaches pretraining teams. The ML ones still
-// arrive through their own keyword — "Research Engineer, Machine Learning" matches
-// on "machine learning" — which is the same reason "research scientist" came out.
-test('wantedTitle no longer accepts bare research and applied-science titles', () => {
-  for (const t of [
-    'Applied Scientist', 'Research Engineer', 'Senior Applied Scientist',
-    'Foundation Model Engineer', 'Research Engineer, Robotics',
-  ]) assert.equal(wantedTitle(t), false, `should reject: ${t}`);
-});
-
-test('but the same roles still arrive when the title says ML', () => {
-  for (const t of [
-    'Research Engineer, Machine Learning', 'Applied Scientist, LLM',
-    'Research Scientist, Machine Learning', 'Foundation Model ML Engineer',
-  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
-});
-
-// "lead" and "leader" are not the same cut. A Lead ML Engineer is usually a staff
-// IC title and sits inside the mid-to-senior scope; an AI Leader is management.
-// Rejecting "lead" outright removed 78 postings, about half of them senior IC.
-test('wantedTitle keeps lead-titled roles, which are usually senior IC', () => {
-  for (const t of [
-    'Lead Machine Learning Engineer', 'ML Engineer, Team Lead',
-    'Lead AI Engineer', 'Technical Lead - Machine Learning',
-    'Lead Applied AI Engineer', 'Lead AI/ML Engineer',
-  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
-});
-
-test('wantedTitle rejects leader-titled roles, which are management', () => {
-  for (const t of [
-    'Enterprise Applied AI Leader', 'Machine Learning Engineer, Team Leader',
-    'AI Engineering Leader', 'Leader, Machine Learning Platform',
-  ]) assert.equal(wantedTitle(t), false, `should reject: ${t}`);
-});
-
-// Two things REJECT could plausibly catch by accident and does not. Both are here
-// because the list holds phrases, not their individual words: "developer advocate"
-// cannot match a bare Developer, and "people ops" cannot match ML Ops.
-test('REJECT does not catch developers through "developer advocate"', () => {
-  for (const t of [
-    'Machine Learning Developer', 'Senior AI Engineer / Developer',
-    'LLM Developer',
-  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
-  assert.equal(wantedTitle('AI Developer Advocate'), false, 'the phrase itself still rejects');
-});
-
-test('REJECT does not catch ML Ops through "people ops"', () => {
-  for (const t of [
-    'ML Ops Engineer', 'MLOps Engineer', 'Senior ML Ops Platform Engineer',
-  ]) assert.ok(wantedTitle(t), `should accept: ${t}`);
-  assert.equal(wantedTitle('People Ops Manager'), false, 'the phrase itself still rejects');
-});
-
-test('wantedTitle rejects titles that merely mention ML', () => {
-  for (const t of [
-    'Machine Learning Intern',
-    'Senior Manager, Imaging Machine Learning',
-    'Director of Machine Learning',
-    'Product Counsel - Machine Learning & AI',
-    'Account Executive - AI Native',
-    'SDET, Inference Platform',
-    'Senior Software Engineer (Frontend) - AI/ML',
-    'Technical Program Manager, ML Infrastructure',
-    'AI Silicon Physical Design Engineer',
-  ]) assert.equal(wantedTitle(t), false, `should reject: ${t}`);
-});
-
-test('wantedTitle rejects unrelated roles outright', () => {
-  for (const t of ['Backend Engineer', 'Office Manager', 'Paralegal', 'Designer'])
-    assert.equal(wantedTitle(t), false, `should reject: ${t}`);
-});
+import { usLocation } from '../lib/filters.js';
 
 test('usLocation accepts US cities, states and bare remote', () => {
   for (const l of [
@@ -119,73 +35,84 @@ test('usLocation does not match the "us" inside other words', () => {
 // term is what dragged in wet-lab, pharma and philosophy roles. A research scientist
 // role that names ML or AI still qualifies; the title was never the problem, the
 // absence of any ML signal was.
-test('a bare research scientist title is not enough on its own', () => {
-  for (const t of [
-    'Research Scientist',
-    'Senior Research Scientist',
-    'Research Scientist (Philosophy)',
-    'Member of Platform Science (Research Scientist, In-vivo)',
-  ]) {
-    assert.equal(wantedTitle(t), false, `"${t}" should not qualify`);
-  }
+// usLocation decides what is scored at all since 2026-10-03, so its misses cost
+// postings rather than a toggle. Checked against the live corpus: 26 of the 50 state
+// codes were listed, and ~4,500 US postings ("St. Louis, MO") read as abroad.
+test('every state code after a comma is US', () => {
+  for (const l of ['St. Louis, MO', 'Hartford, CT', 'Indianapolis, IN', 'Greenfield, IN', 'Boise, ID',
+                   'Wilmington, DE', 'Portland, ME', 'Weirton, WV', 'Little Rock, AR', 'Omaha, NE',
+                   'Anchorage, AK', 'Honolulu, HI', 'San Juan, PR', 'Lincoln, NE; Omaha, NE'])
+    assert.ok(usLocation(l, l), `should accept: ${l}`);
 });
 
-test('a research scientist role that names ML or AI still qualifies', () => {
-  for (const t of [
-    'Research Scientist, Machine Learning',
-    'ML Research Scientist - Representation Learning',
-  ]) {
-    assert.equal(wantedTitle(t), true, `"${t}" should still pass`);
-  }
+test('a state code that is also a country code does not drag in that country', () => {
+  for (const l of ['Pune, IN', 'Hyderabad, IN', 'Darmstadt, DE', 'Stuttgart, DE', 'Berlin, DE', 'Curitiba, PR'])
+    assert.equal(usLocation(l, l), false, `should reject: ${l}`);
 });
 
-// "Research Scientist, Foundation Models" used to reach the board on "foundation
-// model" alone. With that term dropped it no longer names ML or AI anywhere in the
-// title, and a research-lab title with no ML keyword is exactly what came out.
-test('a research title with no ML keyword left does not qualify', () => {
-  for (const t of [
-    'Research Scientist, Foundation Models',
-    'Research Engineer', 'Senior Research Engineer',
-    'Applied Scientist', 'Senior Applied Scientist',
-  ]) {
-    assert.equal(wantedTitle(t), false, `"${t}" should not qualify`);
-  }
+test('state codes count only as uppercase codes, not as words', () => {
+  for (const l of ['Hybrid in office', 'Office me', 'Statistician Network'])
+    assert.equal(usLocation(l, l), false, `should reject: ${l}`);
 });
 
-test('the same titles qualify again once they name ML', () => {
-  for (const t of ['Research Engineer, LLM', 'ML Scientist', 'Applied Scientist, NLP']) {
-    assert.equal(wantedTitle(t), true, `"${t}" should still pass`);
-  }
+test('a role open anywhere, including the US, is kept', () => {
+  for (const l of ['Anywhere', 'Worldwide', 'Global', 'North America'])
+    assert.ok(usLocation(l, l), `should accept: ${l}`);
+  for (const l of ['Hybrid', 'HQ', ''])
+    assert.equal(usLocation(l, l), false, `no country named: ${l}`);
 });
 
-// Wet-lab, pharma and chemistry roles reach the board through a real ML keyword —
-// "Machine Learning Scientist, Protein Design" matches WANT on "machine learning".
-// The title is ML; the job is bench science. Checked against the live corpus: these
-// terms hit 15 postings and collide with nothing wanted.
-test('bench-science roles are rejected even when the title says ML', () => {
-  for (const t of [
-    'Machine Learning Scientist I / II, Protein Design',
-    'Senior ML Scientist, AI for Protein Engineering',
-    'Principal Scientist, Machine Learning - Biomolecules',
-    'Senior ML Scientist, Biological Systems',
-    'Senior/Principal ML Scientist, Translational Biology',
-    'Senior Bioinformatics Research Engineer',
-    'Computational Chemist (Machine Learning) I / II',
-    'Staff Software Engineer, Machine Learning and Computational Chemistry',
-    'Scientist II / Senior ML Scientist, Data-Efficient Learning for Drug Discovery',
-    'ML Research Scientist - Representation Learning for Molecular AI',
-  ]) {
-    assert.equal(wantedTitle(t), false, `"${t}" should be rejected`);
-  }
+// The board's top rows still carried "Remote – Ukraine", "Colombia - Fully Remote" and
+// "Remote, Ontario": BLOCK_LOC named ~50 places, so any other country passed beside
+// "remote" or a US secondary. A primary location abroad rules a posting out.
+test('a primary location in any country abroad is not US, remote or not', () => {
+  for (const l of ['Remote – Ukraine', 'Remote - Colombia', 'Colombia - Fully Remote', 'Remote Philippines',
+                   'Mexico, Remote', 'Remote, Ontario', 'Argentina (Remote)', 'Bogota, Colombia', 'Greece',
+                   'Deutschland, remote', 'Türkiye, Remote', 'Remote - Czech Republic', 'Latin America | Remote',
+                   'Kazakhstan', 'Remote, Serbia', 'South Africa', 'China (Remote)', 'Pakistan - Remote', 'Kyiv'])
+    assert.equal(usLocation(l, l + ' | San Francisco, CA'), false, `should reject even with a US secondary: ${l}`);
 });
 
-test('ML infrastructure is not bench science, whatever the adjacent word', () => {
-  for (const t of [
-    'Senior AI Infrastructure Engineer, Physical Infrastructure',
-    'Principal Machine Learning Researcher (Physical AI)',
-    'Senior Machine Learning Engineer, AI Infrastructure',
-    'Machine Learning Engineer, Search Quality',
-  ]) {
-    assert.equal(wantedTitle(t), true, `"${t}" should still pass`);
-  }
+test('US places that share a name with somewhere abroad stay US', () => {
+  for (const l of ['Albuquerque, New Mexico', 'Mexico, MO', 'Jersey City, NJ', 'Panama City, FL', 'Atlanta, Georgia',
+                   'Lebanon, NH', 'Remote (US/Canada)', 'United States & Canada', 'LATAM (Remote), US (Remote)'])
+    assert.ok(usLocation(l, l), `should accept: ${l}`);
+});
+
+// From the corpus's ~800 locations that name a place abroad AND carry a state code.
+test('a state code written without a comma is US', () => {
+  for (const l of ['Hayward CA', 'Charlotte NC', 'TX - Carrollton', 'CA - Vernon', 'NY', 'OR - Weston',
+                   'District of Columbia (DC)', 'Baldwin NY'])
+    assert.ok(usLocation(l, l), `should accept: ${l}`);
+});
+
+test('a code in front of a place abroad is that country, and "or" is a word', () => {
+  for (const l of ['CA - Toronto', 'CA-Ontario-Toronto', 'IN - Bangalore, India', 'DE - Berlin', 'IL - Tel Aviv',
+                   'Toronto, ON, CA', 'Hanoi OR Ho Chi Minh City', 'Hamburg or Berlin', 'Cracow or Warsaw',
+                   'Remote - Ontario OR British Columbia', 'Bogota D.C. / DC / Colombia'])
+    assert.equal(usLocation(l, l), false, `should reject: ${l}`);
+});
+
+test('US towns named after places abroad stay US', () => {
+  for (const l of ['Vancouver, WA', 'Ontario, CA', 'Brisbane, CA', 'Melbourne, FL', 'Manchester, NH', 'Vienna, VA',
+                   'Dublin, OH', 'South Jordan, UT', 'Rome, NY', 'Amsterdam, NH', 'New Brunswick, NJ'])
+    assert.ok(usLocation(l, l), `should accept: ${l}`);
+});
+
+// Second pass over the corpus diff.
+test('title-case state codes after a comma are US', () => {
+  for (const l of ['Playa Vista, Ca', 'Killeen, Tx', 'Fort Lauderdale, Fl', 'Vancouver, Wa', 'Monroeville, Pa'])
+    assert.ok(usLocation(l, l), `should accept: ${l}`);
+});
+
+test('a list naming the US and Canada is US', () => {
+  for (const l of ['Boston, MA; Mountain View, CA; Toronto, ON', 'San Francisco, CA or Waterloo, ON',
+                   'Dallas, TX, Denver, CO, Edmonton, AB', 'Vancouver, BC or New York City'])
+    assert.ok(usLocation(l, l), `should accept: ${l}`);
+  assert.equal(usLocation('Blainville, QC, CA', 'Blainville, QC, CA'), false);
+});
+
+test('country-code prefixes and postcodes are not states', () => {
+  for (const l of ['IN - Jaipur', 'München DE', 'Covering: CT4 and CT18 Postcodes', 'XUS-IN'])
+    assert.equal(usLocation(l, l), false, `should reject: ${l}`);
 });

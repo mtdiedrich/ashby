@@ -74,3 +74,20 @@ test('the preflight error reads as an auth error', async () => {
   assert.match(e.message, /ANTHROPIC_API_KEY/);
   assert.match(e.message, /\.env/);
 });
+
+// A run of 221,784 Jev requests ran out of credits after 61,712 and then fired the
+// other 160,072 anyway, each failing the same way. No credit is the same answer for
+// every posting, like a bad key, so it stops the run.
+test('isBillingError: out of credits stops a run, like a bad key', async () => {
+  const { isBillingError, isFatal } = await import('../lib/keys.js');
+  const jev402 = Object.assign(new Error('Jev 402: {"detail":{"error_type":"billing_error","message":"Your organization has no available TypeSafe API credits."}}'), { status: 402 });
+  assert.equal(isBillingError(jev402), true);
+  assert.equal(isBillingError({ status: 402 }), true);
+  assert.equal(isBillingError(new Error('billing_error')), true);
+  assert.equal(isBillingError({ status: 400 }), false);
+  assert.equal(isBillingError({ status: 429 }), false);
+  assert.equal(isBillingError(new Error('Billing Specialist, 402 Main St')), false, 'a job title is not a billing failure');
+  assert.equal(isFatal(jev402), true);
+  assert.equal(isFatal({ status: 401 }), true);
+  assert.equal(isFatal({ status: 500 }), false);
+});

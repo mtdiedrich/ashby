@@ -198,3 +198,22 @@ test('a housing subsidy is not pay', () => {
   assert.equal(payFromText('- Housing subsidy of $2,500 per month for those living within walking distance of the office'), null);
   assert.equal(payFromText('Housing subsidy of $2,000/month for those living within walking distance of the office'), null);
 });
+
+// Once every description was stored, 67 postings came back with pay that had neither
+// end — an open figure ("$90K+") combined with a ceiling ("up to $20k"), or "up to
+// $125,000+" — and the board crashed formatting it. No end is no figure: ambiguity
+// resolves to null.
+test('pay with neither a floor nor a ceiling is no pay, not a crash', () => {
+  assert.equal(payFromText('Earning Potential: up to $125,000+ per year (Based on caseload volume)'), null);
+  assert.equal(payFromText('- $70k with the ability to earn up to $20k in incentives (Therapists with a CA license in hand are eligible for base salary of $90K+ monthly productivity incentive.)'), null);
+});
+
+test('paySummary of a stored figure with neither end is null', () => {
+  // descPay stored by a crawl before the fix above, on a row the next crawl leaves alone.
+  assert.equal(paySummary({ min: null, max: null, currency: 'USD', interval: 'year' }), null);
+});
+
+test('statedPay treats a stored figure with neither end as no pay', async () => {
+  const { statedPay } = await import('../lib/pay-text.js');
+  assert.equal(statedPay({ descPay: { min: null, max: null, currency: 'USD', interval: 'year' } }), null);
+});

@@ -1,7 +1,9 @@
 # ashby
 
-Finds ML engineering roles across Ashby-hosted job boards, scores them against your
-resume, and fills in the application forms.
+Collects every posting from every Ashby and Greenhouse board it knows, scores each one
+against your resume, and fills in the application forms. The only filter is
+location: US roles, and roles open to the US, are scored and shown. Nothing is filtered
+by title, pay or age — the board ranks rather than hides.
 
 **You choose what to apply to, and you click submit.** Nothing here queues an
 application or sends one.
@@ -9,8 +11,8 @@ application or sends one.
 ```
                  ┌──────────────── the only network call
                  ▼
-  slugs.txt ─► poll ─► corpus.jsonl
-                │      every posting
+  slugs.txt ─► poll ─► corpus.jsonl  +  descriptions.jsonl
+                │      every posting     every description
                 ▼
            fresh.jsonl ─────────────────► fitness    ─► am I qualified for this
           what still needs                    │
@@ -71,8 +73,10 @@ fabricated answers.
 npm run poll
 ```
 
-Fetches every posting from every board into `corpus.jsonl`, then writes `fresh.jsonl` —
-the ones worth scoring. This is the only command that fetches postings.
+Fetches every posting from every board into `corpus.jsonl` and every description into
+`descriptions.jsonl`, drops postings their boards no longer list, then writes
+`fresh.jsonl` — every US posting not yet scored. This is the only command that fetches
+postings.
 
 ```powershell
 npm run score
@@ -200,7 +204,7 @@ fresher because something older turned up beside it. `HALF_LIFE_DAYS` in
 
 | Command | What it does |
 |---|---|
-| `npm run poll` | Fetch every board into `corpus.jsonl`, rewrite `fresh.jsonl` with what still needs scoring. `--dry`, `--no-crawl`, `--all` (ignore title filter), `--anywhere` (ignore location), `--limit N`, `--jobs N` (boards fetched at once, default 12), `--ats ashby|greenhouse` (fetch just one), `--full` (store every description). |
+| `npm run poll` | Fetch every board into `corpus.jsonl` and `descriptions.jsonl`, drop closed postings, rewrite `fresh.jsonl` with every US posting not yet scored. `--dry`, `--no-crawl`, `--limit N`, `--jobs N` (boards fetched at once, default 12), `--ats ashby|greenhouse` (fetch just one). |
 | `npm run score` | The same as `npm run fitness`. |
 | `npm run fitness` | Score the worklist: asks Jev whether you are qualified, given the whole posting and your resume, about $0.00012 each. `--dry` (price it), `--limit N`, `--force` (ask again even if answered), `--rescore` (ask again for every posting ever scored whose answer is to an older version of the question), `--jobs N` (requests at once, default 6). |
 | `npm run levels` | levels.fyi pay estimates for scored US postings that state no pay, in their pay field or their description. Display only. `--dry` (list the pages, fetch nothing), `--refresh` (ignore the 30-day memory), `--limit N` (at most N company pages), `--jobs N` (pages at once, default 1), `--delay MS` (wait between pages, default 1500 — levels.fyi has a bot check and stops the run when it trips). |
@@ -270,8 +274,9 @@ Every matching row is sent and sorted, but only 300 are painted at a time; "show
 paints another 300 without refetching. Painting all 2,871 was 48,000 DOM nodes and
 about 290ms of layout on every render.
 
-The board sends the whole filtered candidate set (~2,900 rows, under a megabyte) and
-orders it by `value`, the same column the page sorts on. It used to order by fitness
+With no title filter the board covers every US posting — over 150,000 — so it
+sends the top 5,000 (`?limit=`, up to 20,000) ordered by `value`, the same column the
+page sorts on, so the slice is exactly the head of what you would see. It used to order by fitness
 (since dropped) and send the top 600, which silently dropped every posting under two
 days old — they scored below the fitness cutoff and never reached the browser at all.
 
@@ -370,9 +375,10 @@ price. Starting all six at once would have all six miss and each pay the write.
 ```
 
 **Neither is a screening floor.** Nothing is filtered out on them — they are only what
-gets typed into a "salary expectations" box. The floor that decides which postings are
-worth scoring is `Minimum base` in `context.md`, read by `poll`, and the two are
-deliberately separate. `npm test` asserts the selection code never reads these.
+gets typed into a "salary expectations" box. There is no screening floor at all since
+2026-10-03: every posting is scored, and `Minimum base` in `context.md` is read only
+by the model, as a constraint. `npm test` asserts the selection code never reads the
+ask.
 
 Which one is used depends on the engagement, not on the field's name — boards label a
 contract rate box "salary expectations" all the time:
@@ -441,9 +447,8 @@ each: the endpoint, the response shape, and the conversion to a corpus record.
 npm run harvest -- --greenhouse
 ```
 
-That finds and validates Greenhouse boards; `npm run poll` then crawls both. It
-roughly doubled the candidate pool — 1,362 Ashby postings passing the title and
-location filters, plus 1,389 from Greenhouse.
+That finds and validates Greenhouse boards; `npm run poll` then crawls both. Greenhouse
+is most of the corpus — about 167,000 postings against Ashby's 62,000.
 
 Four differences are worth knowing, all checked against live boards:
 
@@ -455,8 +460,9 @@ Four differences are worth knowing, all checked against live boards:
 | employment type | published | not published |
 
 So a Greenhouse posting almost always shows no pay. That is the board being honest
-rather than a bug: the hard pay filter passes anything unstated, and the salary ask
-falls back to your `me.json` figure with no floor to clear.
+rather than a bug: the pay column falls back to pay stated in the description, then a
+levels.fyi estimate, and the salary ask falls back to your `me.json` figure with no
+floor to clear.
 
 **`apply` fills both boards.** `lib/fill.browser.js` detects which one it is on and
 reads the matching DOM — Ashby's `[data-field-path]` entries, or Greenhouse's
@@ -481,16 +487,26 @@ than one that fails.
 
 ### What the corpus stores
 
-The corpus reached 380 MB, of which 367 MB was descriptions for titles the filters
-will never pass to a scorer. Adding Greenhouse the same way projected a 5.5 GB heap —
-past Node's default limit, at which point it simply stops loading.
+**Every description is stored, in its own file.** Until 2026-10-03 the corpus kept
+descriptions only for titles the filter passed, because all of them in `corpus.jsonl`
+projected a 5.5 GB heap — poll, crawl and the board each hold the whole corpus in
+memory. With the filter gone every posting is scored and every description is needed,
+about 1.2 billion characters. So `corpus.jsonl` is metadata (~900 bytes a posting) and
+the text goes to `descriptions.jsonl`, which nothing reads whole: an index of id → byte
+offset is built from the front of each line, and a description is read by seeking to
+it — once to hash it and once to ask Jev about it, never held for a whole run.
 
-So **metadata is kept for every posting and the description only for titles a scorer
-could see.** The board still lists everything. Staging a posting whose description was
-not kept fetches it first, which is one request at the moment you need it. Greenhouse
-postings cost 715 bytes each this way instead of 5,814.
+The pay a description states is read once at crawl time and kept on the corpus row as
+`descPay`, so the board's pay column never needs the text. The worklist carries no
+descriptions either; 225,000 of them were 1.3 GB.
 
-`npm run poll -- --full` keeps every description, if you want the old behaviour.
+**Closed postings are dropped.** When a board answers and no longer lists a posting,
+the crawl takes it out of `corpus.jsonl`, `descriptions.jsonl`, `fresh.jsonl` and
+`pay-estimates.jsonl`, so it leaves the board and the worklist. A board that fails or times out closes nothing,
+and neither does one that answers with no postings at all — that looks the same as a
+board having a bad moment. Fitness rows are kept, since a re-listing with the same
+text reuses them; `log.jsonl`, `queue.jsonl` and `dismissed.jsonl` are history and
+are never pruned.
 
 **The corpus compacts itself.** It is append-only — a posting re-crawled with changed
 content is written again and readers take the newest — so a change that touches many
@@ -502,6 +518,8 @@ died with `ERR_STRING_TOO_LONG`.
 Nothing reads the file as one string any more, and `crawl` now rewrites it whenever
 the dead rows exceed a quarter of the live ones, or the file nears that limit. That
 took 555 MB back to 189 MB. `node bin/crawl.js --compact` forces it by hand.
+`descriptions.jsonl` is append-only on the same terms and compacted on the same rule —
+after any closure, or once a quarter of its rows are superseded.
 
 ### Postal address
 
@@ -550,14 +568,19 @@ npm run apply -- --no-model --limit 1
 
 ## Tuning
 
-**Pay floor** — the `- Minimum base:` line under `## Hard constraints` in `context.md`.
-Written in exactly one place: `poll` parses it and the model reads the same file, so
-they can't drift. Accepts `$150,000`, `150000`, or `150k`. `poll` prints the floor it
-is using on every run.
-
-**Title and location filters** — `lib/filters.js`, shared by every stage. `MAX_AGE_DAYS`
-is at the top of `bin/poll.js`. Changes take effect on the next `poll`; there is nothing
-to invalidate, because the worklist is recomputed each run.
+**Filters** — one: location. `poll` stages, `fitness` scores and the board shows
+only postings in the US or open to it — `usLocation()` in `lib/filters.js`, through
+`inUS()` in `lib/select.js`. A US city, state name or state code ("St. Louis, MO",
+"Killeen, Tx", "Olathe KS", "TX - Carrollton"), "Remote", "United States",
+"Anywhere", "Worldwide", "Global" or "North America" counts. Any country, Canadian
+province or foreign region in the primary location rules a posting out — "Remote –
+Ukraine", "Colombia - Fully Remote", "CA - Toronto", "Toronto, ON, CA" — even with
+a US office in its secondary locations, unless that primary location names a US place
+too ("Remote (US/Canada)", "Vancouver, WA", "Panama City, FL"). A location naming no
+country ("Hybrid", "HQ") is left out. The title, pay-floor and age filters were removed on 2026-10-03. The
+crawl still stores non-US postings, so widening this needs no re-fetch. To narrow
+further, use the board's toggles, score ranges and search box — they hide rows, they
+never stop anything being scored.
 
 **Re-scoring everything** — `npm run fitness -- --rescore --force` asks again for every
 posting ever scored.
@@ -638,8 +661,9 @@ work from any directory.
 | File | What it is |
 |---|---|
 | `slugs.txt` | Validated board slugs. Grows; never shrinks. |
-| `corpus.jsonl` | Every posting from every board, unfiltered. The only store of postings. |
-| `fresh.jsonl` | The worklist: staged, not yet scored. Rewritten by `poll`, read by every scorer, consumed by none. |
+| `corpus.jsonl` | Every posting from every board, unfiltered — metadata, plus `descPay`, the pay its description states. The only store of postings. |
+| `descriptions.jsonl` | Every posting's description, one row per posting and content hash, newest wins. Written by the crawl (and by the board's stage button for a posting it lacks); read by `fitness` and the board's expanded row, by byte offset. |
+| `fresh.jsonl` | The worklist: every US posting not yet scored, without descriptions. Rewritten by `poll`, read by every scorer, consumed by none. |
 | `jev-fitness.jsonl` | The score: Jev's probability that you are qualified, per posting, resume version and version of the question. Written by `npm run fitness`; read by the board, `poll` and `levels`. Newest per posting wins. |
 | `queue.jsonl` | What you picked. The only input to `apply`. |
 | `dismissed.jsonl` | What you said no to. |
@@ -660,8 +684,8 @@ npm test
 
 Node's built-in runner over `test/`. No framework, no dependency. Covers the places
 where being wrong is silent: salary parsing (hourly and monthly annualising, currency,
-unstated pay), the title and location filters, whitespace normalising, pay-floor
-parsing, and candidate selection end to end.
+unstated pay), location matching, whitespace normalising, the description store, and
+candidate selection end to end.
 
 Written test-first — the failing test goes in before the implementation, and a bug gets
 a test reproducing it before it gets a fix. Tests never touch real data:
@@ -689,7 +713,7 @@ or cost real debugging:
 - **The application form has no `<form>` element.** Fields are `[data-field-path]`,
   "required" is a hashed `_required_` class on the label rather than `aria-required`,
   and the autocomplete's listbox is portaled to `document.body` outside the field entry.
-- Most boards publish no salary at all. A posting with no stated range **passes** the
-  pay filter on purpose; the model reads the description instead.
+- Most boards publish no salary at all. Many state it in the description instead,
+  which the pay column reads.
 - **Ashby dedupes candidates by email**, so an application you didn't mean to send is
   not undoable. That is what picking your own queue is for.

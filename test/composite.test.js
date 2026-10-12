@@ -111,3 +111,12 @@ test('coverage on a row changes nothing — it was dropped', () => {
 test('an empty set does not throw', () => {
   assert.deepEqual(composite([]), []);
 });
+
+// Math.min(...values) spreads every value onto the stack, and threw RangeError past
+// ~120,000 rows. Scoring every posting puts ~225,000 fitness values on the board.
+test('min-max works over every posting in the corpus, not just a filtered few', () => {
+  const rows = Array.from({ length: 250_000 }, (_, i) => ({ id: String(i), fitness: (i % 100) / 100, daysLive: i % 30 }));
+  const out = composite(rows);
+  assert.equal(out.length, 250_000);
+  assert.ok(out.some(r => r.value != null));
+});

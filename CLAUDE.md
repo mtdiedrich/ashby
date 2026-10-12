@@ -116,9 +116,10 @@ earlier explanation was wrong.
 - **Nothing invents the user's details.** The model skips rather than guesses; a gap
   is better than a fabricated answer on a job application.
 - **An ask is not a floor.** `me.json`'s `salaryExpectation`/`hourlyRate` are what
-  gets typed into a form. The screening floor is `Minimum base` in `context.md`.
-  Selection code must never read the ask — `test/pay-ask.test.js` enforces this by
-  scanning `lib/select.js`, `lib/comp.js`, `lib/filters.js` and `bin/poll.js`.
+  gets typed into a form. There is no screening floor since 2026-10-03 — selection
+  does not filter at all — and `Minimum base` in `context.md` is read only by the
+  model. Selection code must never read the ask — `test/pay-ask.test.js` enforces this
+  by scanning `lib/select.js`, `lib/comp.js`, `lib/filters.js` and `bin/poll.js`.
 
 ## Write work as it lands, never at the end
 
@@ -141,8 +142,11 @@ and then "0 scored" — the only honest line was the zero.
 
 - Keys are preflighted **once**, before any work: `preflight()` in `lib/ai.js`,
   `requireKey()` in `lib/keys.js`. A placeholder is caught before a single request.
-- `pool()` takes `stopOn`; the scorers pass `isAuthError` so the run aborts on the
-  first 401 instead of repeating it.
+- `pool()` takes `stopOn`; the scorers pass `isFatal` (`lib/keys.js`) so the run
+  aborts on the first 401 — or 402, out of credit — instead of repeating it. A Jev run
+  that ran dry after 61,712 postings fired the remaining 160,072 anyway; Jev first
+  reports an exhausted balance as `400 max_tokens_exceeded`, then as `402
+  billing_error`, so read the 402 before blaming a posting's length.
 - Anything thrown by a preflight carries `status = 401` so `isAuthError` sees it.
   Without that the pool treated it as an ordinary per-item failure and printed it
   once per posting.
@@ -219,11 +223,22 @@ that is what crossed the limit above. `compactCorpus()` keeps the newest row per
 via a temp file and a rename so a failure leaves the original intact. crawl runs it
 automatically past 1.25x dead rows.
 
-**The corpus does not store every description.** It holds metadata for everything and
-descriptions only for titles `wantedTitle` passes; anything else is marked
-`descriptionStored: false` and fetched on demand when staged. An empty description is
-never the same as a missing one, and scoring a blank produces a confident number about
-nothing. Measured: 96.5% of a 380 MB corpus was descriptions that would never be read.
+**Location is the only filter.** The title, pay-floor and age filters were removed on
+2026-10-03. `candidates()` excludes finished, dismissed and non-US postings — `inUS()`
+in `lib/select.js`, which the board applies too — and every other posting is scored.
+`usLocation()` now decides what is scored at all, so a miss costs postings: verify a
+change against the live corpus's location strings, not a guess (26 of 50 state codes
+once dropped ~4,500 US postings). The crawl stores everything regardless; do not add
+a filter there.
+
+**Descriptions live in `descriptions.jsonl`, not the corpus.** Every one is stored —
+~1.2 billion characters, ~2.5 GB as parsed strings — and poll, crawl and the board
+each hold the whole corpus in memory, so the corpus is metadata. Read text through
+`describe()` / `descriptionOf()` in `lib/descriptions.js` (byte-offset index, never the
+whole file); never hold descriptions for a whole run, and never put them back on
+corpus rows or worklist rows. Pay stated in the text is read at crawl time into the
+row's `descPay`; read it with `statedPay()`. Scoring a blank produces a confident
+number about nothing, so a posting with no text is skipped and counted.
 
 ## The board
 
