@@ -1,4 +1,4 @@
-// A scoring run should leave every staged posting scored on all three fronts.
+// A scoring run should leave every staged posting scored — coverage is the only front.
 // These tests pin the rules that make that true regardless of the order you run
 // the scorers in.
 
@@ -10,18 +10,7 @@ import { corpusRecord } from './helpers.js';
 const asMap = (...recs) => new Map(recs.map(r => [r.id, r]));
 const ids = rows => rows.map(r => r.id).sort();
 
-test('a posting with fitness but no coverage is still a candidate', () => {
-  // fitness.js and coverage.js are separate runs. Something scored by one and not
-  // the other is not finished, and must stay on the worklist.
-  const c = asMap(corpusRecord({ id: 'a' }), corpusRecord({ id: 'b' }));
-  const done = new Set(['b']);                 // b has both
-  const partly = { fitness: new Set(['a', 'b']), coverage: new Set(['b']) };
-  assert.deepEqual(ids(candidates(c, { done })), ['a']);
-  assert.ok(partly.fitness.has('a') && !partly.coverage.has('a'),
-    'a is the partially-scored case this test is about');
-});
-
-test('a posting scored on both fronts drops off the worklist', () => {
+test('a finished posting drops off the worklist', () => {
   const c = asMap(corpusRecord({ id: 'a' }), corpusRecord({ id: 'b' }));
   assert.deepEqual(ids(candidates(c, { done: new Set(['a', 'b']) })), []);
 });

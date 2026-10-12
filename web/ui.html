@@ -35,10 +35,23 @@
     border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
 
   table { border-collapse: collapse; width: 100%; }
-  thead th { position: sticky; top: 71px; z-index: 5; background: var(--bg);
+  /* The whole head is sticky, not each th: it is two rows now, and per-cell
+     stickiness would need a hand-measured top for the second one. */
+  thead { position: sticky; top: 71px; z-index: 5; }
+  thead th { background: var(--bg);
     text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
+    color: var(--muted); font-weight: 600; padding: 8px 10px 5px;
     cursor: pointer; white-space: nowrap; user-select: none; }
+  thead tr.ranges th { cursor: default; padding: 0 6px 7px 10px; text-transform: none;
+    letter-spacing: 0; font-weight: 400; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .rng-pair { display: flex; flex-direction: column; gap: 3px; }
+  input.rng { width: 48px; padding: 2px 4px; font: inherit; font-size: 11px;
+    font-variant-numeric: tabular-nums; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--panel); color: var(--ink); -moz-appearance: textfield; }
+  input.rng::-webkit-inner-spin-button, input.rng::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input.rng::placeholder { color: var(--muted); opacity: .7; }
+  input.rng.on { border-color: var(--accent); }
+  #clearranges { font-size: 11px; padding: 2px 8px; }
   thead th:hover { color: var(--ink); }
   thead th .caret { opacity: 0; margin-left: 3px; }
   thead th.sorted { color: var(--ink); }
@@ -53,7 +66,12 @@
   .s-hi { color: var(--good); } .s-mid { color: var(--warn); } .s-lo { color: var(--muted); }
   td.title { font-weight: 600; max-width: 360px; }
   td.co, td.loc, td.pay, td.date { color: var(--muted); white-space: nowrap; }
+  /* Locations wrap. Multi-city postings run past 100 characters, and on one line the
+     longest set the column's width and pushed every column after it off the page. */
+  td.loc { white-space: normal; width: 220px; max-width: 220px; overflow-wrap: anywhere; }
   td.pay.has { color: var(--good); }
+  td.pay.est { font-style: italic; }
+  td.pay.est .sub { font-style: normal; white-space: normal; max-width: 170px; }
   td.date { font-variant-numeric: tabular-nums; }
   td.date.stale { color: var(--warn); }
   td.st { width: 1%; }
@@ -84,13 +102,6 @@
   .pane h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
              letter-spacing: .07em; color: var(--muted); font-weight: 600; }
   .pane h4 + h4, .pane ul + h4, .pane p + h4 { margin-top: 18px; }
-  .why { margin: 0; }
-  ul.concerns { margin: 8px 0 0; padding-left: 17px; color: var(--muted); }
-  ul.reqs { margin: 0; padding: 0; list-style: none; }
-  ul.reqs li { display: grid; grid-template-columns: 30px 1fr; gap: 6px; margin-bottom: 6px; }
-  ul.reqs b { font-variant-numeric: tabular-nums; }
-  .r0 { color: var(--bad); } .r1 { color: var(--warn); } .r2 { color: var(--ink); } .r3 { color: var(--good); }
-  .ev { color: var(--muted); font-size: 12px; display: block; }
   .desc { white-space: pre-wrap; max-height: 340px; overflow-y: auto;
           color: var(--muted); font-size: 12px; padding-right: 8px; }
   .acts { margin-top: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -116,24 +127,25 @@
     <button class="tab" data-f="scored" aria-pressed="false">scored only</button>
     <input type="search" id="q" placeholder="filter by title, company, team…">
     <button class="tab" id="refresh">refresh</button>
-    <button class="tab" id="stagetop" title="Stage the 25 highest-similarity postings that still need scoring">stage top 25</button>
   </div>
 </header>
 
 <table>
   <thead>
     <tr>
-      <th data-s="fitness">fitness <span class="caret">▾</span></th>
-      <th data-s="coverage">coverage <span class="caret">▾</span></th>
-      <th data-s="similarity">similarity <span class="caret">▾</span></th>
-      <th data-s="score" title="Geometric mean of the three scores, each min-maxed across the rows shown. One weak score drags it down — a posting has to be decent on all three. Blank until all three exist.">score <span class="caret">▾</span></th>
+      <th data-s="fitness" title="Jev's answer to one question, given the whole posting and your resume: is the candidate qualified for this job? Probability of yes. The score value is built on.">fitness <span class="caret">▾</span></th>
       <th data-s="fresh" title="How much of its value the posting still has. Halves every 7 days: listed today 1.00, a week old 0.50, a month 0.05.">fresh <span class="caret">▾</span></th>
-      <th data-s="value" class="sorted" title="The average of score and fresh — how good the match is, and whether it is still worth chasing.">value <span class="caret">▾</span></th>
+      <th data-s="value" class="sorted" title="Geometric mean of fitness (min-maxed across the rows shown) and fresh — how good the match is, and whether it is still worth chasing. Weak on either drags it down. Blank until both exist.">value <span class="caret">▾</span></th>
       <th data-s="state">state <span class="caret">▾</span></th>
       <th data-s="title">title <span class="caret">▾</span></th>
       <th data-s="slug">company <span class="caret">▾</span></th>
       <th data-s="location">location <span class="caret">▾</span></th>
       <th data-s="payNum">pay <span class="caret">▾</span></th>
+    </tr>
+    <tr class="ranges" title="Show only rows inside these bounds (inclusive). A row with no value for a bounded column is hidden.">
+      <th data-r="fitness"></th><th data-r="fresh"></th><th data-r="value"></th>
+      <th><button class="tab" id="clearranges" hidden>clear ranges</button></th>
+      <th></th><th></th><th></th><th></th>
     </tr>
   </thead>
   <tbody id="rows"></tbody>
@@ -141,7 +153,15 @@
 <button class="tab" id="more" hidden>show more</button>
 
 <script>
-let JOBS = [], TOTAL = 0, term = '', sortKey = 'value', sortDir = -1, limit = 600;
+let JOBS = [], TOTAL = 0, term = "", sortKey = "value", sortDir = -1, limit = 5000;
+
+// Every row is fetched and sorted, but only this many are painted. 2,871 rows is
+// 48,000 DOM nodes and ~290ms of layout on every render — the browser stall. The cap
+// is applied AFTER sorting and filtering, so it only ever hides the tail of the list
+// you are already looking at. (Unlike the old server-side slice, which cut on a
+// different ordering than the page displayed and hid every fresh posting.)
+const PAINT_STEP = 300;
+let painted = PAINT_STEP;
 const opts = { us: true, remote: false, all: false, scored: false };
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -165,24 +185,77 @@ async function load() {
   try { d = await (await fetch('/api/board?' + q)).json(); }
   catch {
     document.getElementById('rows').innerHTML =
-      '<tr><td colspan="11" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
+      '<tr><td colspan="8" class="empty">Could not reach the server — is <b>node ui.js</b> still running?</td></tr>';
     return;
   }
 
   JOBS = d.jobs.map(j => ({ ...j, payNum: parseTop(j.pay) }));
   TOTAL = d.total;
   document.getElementById('stamp').textContent =
-    d.total + ' postings · ' + d.counts.fitness + ' fitness · ' + d.counts.coverage +
-    ' coverage · ' + d.counts.similarity + ' similarity · ' + d.counts.value + ' ranked · ' + d.counts.queued + ' queued · ' + d.counts.applied + ' submitted';
-  const more = document.getElementById('more');
-  more.hidden = JOBS.length >= TOTAL;
-  more.textContent = 'show more (' + JOBS.length + ' of ' + TOTAL + ')';
+    d.total + ' postings · ' + d.counts.fitness +
+    ' fitness · ' + d.counts.value + ' ranked · ' + d.counts.queued + ' queued · ' + d.counts.applied + ' submitted';
+  painted = PAINT_STEP;
   render();
 }
 
+/** Painting more is a re-render, not a refetch — every row is already here. */
+function updateMore(shown, matching) {
+  const more = document.getElementById('more');
+  more.hidden = shown >= matching;
+  more.textContent = 'show more (' + shown + ' of ' + matching + ')';
+}
+
+// ---- score ranges --------------------------------------------------------
+//
+// A min and a max under each score column. Client-side, like the search box: every
+// row is already here, so narrowing needs no refetch. Keyed on the field each column
+// draws. A bound stored for a column that no longer exists (similarity, dropped
+// 2026-10-02) is simply never read.
+//
+// Remembered in this browser only. Storage can be unavailable (private window,
+// blocked site data), and then the ranges simply start empty.
+const RANGE_KEYS = ['fitness', 'fresh', 'value'];
+const RANGE_STORE = 'ashby.ranges';
+let ranges = {};
+try { ranges = JSON.parse(localStorage.getItem(RANGE_STORE) || '{}') || {}; } catch { ranges = {}; }
+const saveRanges = () => { try { localStorage.setItem(RANGE_STORE, JSON.stringify(ranges)); } catch {} };
+const bound = (k, b) => ranges[k]?.[b] ?? null;
+const anyRange = () => RANGE_KEYS.some(k => bound(k, 'min') != null || bound(k, 'max') != null);
+
+// Compared at the two decimals the cell shows, so a row reading 0.60 is inside
+// "min 0.6" rather than excluded for being 0.598 underneath. Inclusive both ends.
+// A row with no value for a bounded column is outside it: unscored is not in range.
+function inRanges(j) {
+  for (const k of RANGE_KEYS) {
+    const lo = bound(k, 'min'), hi = bound(k, 'max');
+    if (lo == null && hi == null) continue;
+    if (j[k] == null) return false;
+    const v = Math.round(j[k] * 100) / 100;
+    if (lo != null && v < lo) return false;
+    if (hi != null && v > hi) return false;
+  }
+  return true;
+}
+
+function paintRangeInputs() {
+  for (const th of document.querySelectorAll('tr.ranges th[data-r]')) {
+    const k = th.dataset.r;
+    th.innerHTML = '<div class="rng-pair">' + ['min', 'max'].map(b =>
+      '<input class="rng" type="number" step="0.05" min="0" max="1" inputmode="decimal"' +
+      ' data-k="' + k + '" data-b="' + b + '" placeholder="' + b + '" aria-label="' + k + ' ' + b + '"' +
+      ' value="' + (bound(k, b) ?? '') + '">').join('') + '</div>';
+  }
+  markRanges();
+}
+function markRanges() {
+  for (const i of document.querySelectorAll('input.rng')) i.classList.toggle('on', i.value.trim() !== '');
+  document.getElementById('clearranges').hidden = !anyRange();
+}
+
 function visible() {
-  const rows = JOBS.filter(j => !term ||
-    [j.title, j.slug, j.department, j.team, j.location].filter(Boolean).join(' ').toLowerCase().includes(term));
+  const rows = JOBS.filter(j => (!term ||
+    [j.title, j.slug, j.department, j.team, j.location].filter(Boolean).join(' ').toLowerCase().includes(term))
+    && inRanges(j));
   rows.sort((a, b) => {
     const x = a[sortKey], y = b[sortKey];
     // Nulls always sink, whichever way the column is sorted.
@@ -195,51 +268,50 @@ function visible() {
   return rows;
 }
 
+// Published pay as before. Where a posting publishes none, a levels.fyi estimate from
+// `npm run levels` — marked "est.", with where it came from, and never in payNum: an
+// estimate is what people at the company reported, not what this posting offers, so
+// sorting by pay ranks published pay only.
+const k$ = n => '$' + Math.round(n / 1000) + 'K';
+function payCell(j) {
+  // Pay stated in the description is the posting's own pay, just not in its pay field:
+  // drawn as pay, with the source named. The sentence is in the expanded row.
+  if (j.pay && j.payFrom === 'description') {
+    return '<td class="pay has" title="Stated in the job description — the posting\'s pay field is empty. Expand the row for the sentence.">' +
+      esc(j.pay) + '</td>';
+  }
+  if (j.pay || !j.payEst) return '<td class="pay' + (j.pay ? ' has' : '') + '">' + esc(j.pay || '—') + '</td>';
+  const e = j.payEst;
+  const fig = e.low != null && e.high != null && e.low !== e.high ? k$(e.low) + '–' + k$(e.high) : k$(e.base);
+  const what = e.kind === 'all levels' ? 'all levels' : e.level;
+  const tip = 'levels.fyi: ' + (e.company || 'this company') + ', ' +
+    (e.kind === 'all levels' ? 'US base salary across all levels (25th–75th percentile, median ' + k$(e.base) + ')'
+      : 'average US base salary at ' + e.level + (e.kind === 'exact' ? ' (exact title)' : ' (same seniority)')) +
+    ', from ' + e.count + ' submission' + (e.count === 1 ? '' : 's') +
+    (e.total != null ? '; total comp ' + k$(e.total) : '') +
+    '. An estimate from what people at the company reported — not this posting\'s pay.';
+  return '<td class="pay est" title="' + esc(tip) + '">est. ' + fig +
+    '<span class="sub">' + esc(what) + ' · n=' + e.count + '</span></td>';
+}
+
 function render() {
-  const rows = visible();
+  const all = visible();
   const body = document.getElementById('rows');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="11" class="empty">nothing here</td></tr>'; return; }
+  if (!all.length) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">' +
+      (JOBS.length && anyRange() ? 'nothing inside these ranges' : 'nothing here') + '</td></tr>';
+    updateMore(0, 0);
+    return;
+  }
+
+  // Sorted and filtered over every row, then capped for painting.
+  const rows = all.slice(0, painted);
+  updateMore(rows.length, all.length);
 
   body.innerHTML = rows.map(j => {
-    const cov = j.coverage == null ? '—'
-      : j.coverage.toFixed(2) + '<span class="sub">' + j.met + '/' + j.reqTotal + '</span>';
-
-    const fitPane = j.fitness == null
-      ? '<p class="meta">Not judged yet — send it to the scorers, then run <b>node fitness.js</b>.</p>'
-      : '<p class="why">' + esc(j.why) + '</p>' +
-        (j.concerns.length ? '<ul class="concerns">' + j.concerns.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>' : '');
-
-    const covPane = j.coverage == null
-      ? '<p class="meta">No requirement breakdown yet — run <b>node coverage.js</b>.</p>'
-      : '<ul class="reqs">' + j.requirements.filter(r => r.kind !== 'logistics').map(r =>
-          '<li><b class="r' + r.score + '">' + r.score + '/3</b><span>' + esc(r.text) +
-          '<span class="ev">' + esc(r.evidence) + '</span></span></li>').join('') + '</ul>' +
-        (j.constraints.length
-          ? '<p class="meta" style="margin-top:10px">check yourself: ' + j.constraints.map(esc).join('; ') + '</p>'
-          : '');
-
-    const act = j.state === 'applied'
-      ? '<span class="meta">submitted</span>'
-      : j.state === 'opened'
-        ? '<span class="meta">opened in apply.js, not submitted</span>'
-      : j.state === 'queued'
-        ? '<button class="act drop" data-q="0">remove from queue</button>'
-        : '<button class="act primary" data-q="1">queue for application</button>';
-    const dismissBtn = j.state === 'dismissed'
-      ? '<button class="act" data-dismiss="0">un-dismiss</button>'
-      : '<button class="act" data-dismiss="1">not interested</button>';
-    const stageBtn = j.state === 'staged'
-      ? '<span class="meta">staged for the next scorer run</span>'
-      : (j.fitness == null || j.coverage == null)
-        ? '<button class="act" data-stage="1">send to scorers</button>' : '';
 
     return '<tr class="r" data-id="' + esc(j.id) + '">' +
         '<td class="num ' + cls(j.fitness) + '">' + num(j.fitness) + '</td>' +
-        '<td class="num ' + cls(j.coverage) + '">' + cov + '</td>' +
-        '<td class="num ' + (j.similarity == null ? 'none' : '') + '">' +
-          (j.similarity == null ? '—' : j.similarity.toFixed(3)) + '</td>' +
-        '<td class="num ' + (j.score == null ? 'none' : cls(j.score)) + '">' +
-          (j.score == null ? '—' : j.score.toFixed(2)) + '</td>' +
         '<td class="num ' + (j.fresh == null ? 'none' : cls(j.fresh)) + '">' +
           (j.fresh == null ? '—' : j.fresh.toFixed(2)) +
           (j.daysLive == null ? '' : '<span class="sub">' + j.daysLive + 'd</span>') + '</td>' +
@@ -249,28 +321,75 @@ function render() {
         '<td class="title">' + esc(j.title) + '</td>' +
         '<td class="co">' + esc(j.slug) + '</td>' +
         '<td class="loc">' + esc(j.location || '?') + '</td>' +
-        '<td class="pay' + (j.pay ? ' has' : '') + '">' + esc(j.pay || '—') + '</td>' +
+        payCell(j) +
       '</tr>' +
-      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="11">' +
-        '<div class="panes">' +
-          '<div class="pane">' +
-            '<h4>Fitness — should I apply</h4>' + fitPane +
-            '<h4>Coverage — what I can demonstrate</h4>' + covPane +
-            '<div class="acts">' + act + stageBtn + dismissBtn +
-              (j.applyUrl ? '<a class="lnk" href="' + esc(j.applyUrl) + '" target="_blank" rel="noopener">application ↗</a>' : '') +
-              (j.jobUrl ? '<a class="lnk" href="' + esc(j.jobUrl) + '" target="_blank" rel="noopener">posting ↗</a>' : '') +
-            '</div>' +
-            '<div class="acts"><span class="meta">' + esc(j.department || '?') + ' / ' + esc(j.team || '?') +
-              ' · ' + esc(j.workplaceType || '?') + ' · ' + esc(j.employmentType || '?') +
-              (j.judgedAt ? ' · judged ' + esc(j.judgedAt.slice(0, 10)) + ' by ' + esc(j.fitnessModel || '?') : '') +
-            '</span></div>' +
-          '</div>' +
-          '<div class="pane"><h4>Job description</h4>' +
-            '<div class="desc">' + esc(j.description || '(not stored)') + '</div>' +
-          '</div>' +
-        '</div>' +
-      '</td></tr>';
+      '<tr class="detail" data-for="' + esc(j.id) + '"><td colspan="8"></td></tr>';
   }).join('');
+}
+
+/*
+ * The expanded pane, built when a row is opened rather than for all 600 rows on
+ * every render. It used to carry a full job description and requirement list per
+ * row, hidden behind CSS — 5.1 MB of a 5.8 MB board response, rebuilt as HTML on
+ * every keystroke in the search box.
+ */
+function paneHtml(j, d) {
+  const fitLine = j.fitness == null
+    ? '<p class="meta fitline">Not scored yet — send it to the scorers, then run <b>npm run fitness</b>.</p>'
+    : '<p class="fitline"><b class="' + cls(j.fitness) + '">' + j.fitness.toFixed(2) + '</b> ' +
+      '<span class="meta">Jev\'s probability that you are qualified for this job, from the posting and your resume.</span></p>';
+
+  const act = j.state === 'applied'
+    ? '<span class="meta">submitted</span>'
+    : j.state === 'opened'
+      ? '<span class="meta">opened in apply.js, not submitted</span>'
+    : j.state === 'queued'
+      ? '<button class="act drop" data-q="0">remove from queue</button>'
+      : '<button class="act primary" data-q="1">queue for application</button>';
+  const dismissBtn = j.state === 'dismissed'
+    ? '<button class="act" data-dismiss="0">un-dismiss</button>'
+    : '<button class="act" data-dismiss="1">not interested</button>';
+  const stageBtn = j.state === 'staged'
+    ? '<span class="meta">staged for the next scorer run</span>'
+    : j.fitness == null
+      ? '<button class="act" data-stage="1">send to scorers</button>' : '';
+
+  return '<div class="panes">' +
+      '<div class="pane">' +
+        '<h4>Fitness — qualified for this job?</h4>' + fitLine +
+        (d.payText ? '<h4>Pay, from the description</h4><p class="meta paytext">' + esc(d.payText) + '</p>' : '') +
+        '<div class="acts">' + act + stageBtn + dismissBtn +
+          (d.applyUrl ? '<a class="lnk" href="' + esc(d.applyUrl) + '" target="_blank" rel="noopener">application ↗</a>' : '') +
+          (d.jobUrl ? '<a class="lnk" href="' + esc(d.jobUrl) + '" target="_blank" rel="noopener">posting ↗</a>' : '') +
+        '</div>' +
+        '<div class="acts"><span class="meta">' + esc(d.department || '?') + ' / ' + esc(d.team || '?') +
+          ' · ' + esc(d.workplaceType || '?') + ' · ' + esc(d.employmentType || '?') +
+        '</span></div>' +
+      '</div>' +
+      '<div class="pane"><h4>Job description</h4>' +
+        '<div class="desc">' + esc(d.description || '(not stored)') + '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+// Detail is fetched once per posting and kept, so collapsing and re-expanding a row
+// costs nothing.
+const detailCache = new Map();
+async function fillPane(id) {
+  const cell = document.querySelector('tr.detail[data-for="' + CSS.escape(id) + '"] td');
+  if (!cell || cell.dataset.filled === '1') return;
+  const j = JOBS.find(r => r.id === id);
+  if (!j) return;
+  cell.innerHTML = '<p class="meta">loading…</p>';
+  try {
+    if (!detailCache.has(id)) {
+      detailCache.set(id, await (await fetch('/api/detail?id=' + encodeURIComponent(id))).json());
+    }
+    cell.innerHTML = paneHtml(j, detailCache.get(id));
+    cell.dataset.filled = '1';
+  } catch {
+    cell.innerHTML = '<p class="meta">could not load this posting\'s detail</p>';
+  }
 }
 
 document.getElementById('rows').addEventListener('click', async (e) => {
@@ -302,14 +421,16 @@ document.getElementById('rows').addEventListener('click', async (e) => {
   const r = e.target.closest('tr.r');
   if (!r) return;
   r.classList.toggle('open');
-  document.querySelector('tr.detail[data-for="' + CSS.escape(r.dataset.id) + '"]')?.classList.toggle('open');
+  const d = document.querySelector('tr.detail[data-for="' + CSS.escape(r.dataset.id) + '"]');
+  d?.classList.toggle('open');
+  if (d?.classList.contains('open')) fillPane(r.dataset.id);
 });
 
 for (const th of document.querySelectorAll('thead th[data-s]')) {
   th.addEventListener('click', () => {
     const k = th.dataset.s;
     if (sortKey === k) sortDir = -sortDir;
-    else { sortKey = k; sortDir = ['fitness', 'coverage', 'similarity', 'score', 'fresh', 'value', 'payNum'].includes(k) ? -1 : 1; }
+    else { sortKey = k; sortDir = ['fitness', 'fresh', 'value', 'payNum'].includes(k) ? -1 : 1; }
     for (const o of document.querySelectorAll('thead th')) o.classList.remove('sorted');
     th.classList.add('sorted');
     th.querySelector('.caret').textContent = sortDir === -1 ? '▾' : '▴';
@@ -323,21 +444,43 @@ for (const t of document.querySelectorAll('.tab[data-f]')) {
     if (opts[k] && k === 'us') opts.remote = false;
     if (opts[k] && k === 'remote') opts.us = false;
     for (const o of document.querySelectorAll('.tab[data-f]')) o.setAttribute('aria-pressed', String(!!opts[o.dataset.f]));
-    limit = 600;
+    limit = 5000;
     load();
   });
 }
-document.getElementById('q').addEventListener('input', e => { term = e.target.value.toLowerCase().trim(); render(); });
-document.getElementById('refresh').addEventListener('click', load);
-document.getElementById('stagetop').addEventListener('click', async (e) => {
-  e.target.disabled = true; e.target.textContent = 'staging…';
-  const res = await (await fetch('/api/stage-top', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ n: 25, ...opts }) })).json();
-  e.target.disabled = false; e.target.textContent = 'stage top 25';
-  if (res.staged === 0) alert('Nothing left to stage — everything matching is already scored or staged.');
-  await load();
+// Debounced. render() rebuilds the whole table, and calling it synchronously on
+// every keystroke is what made typing in this box feel like the machine had stalled.
+let typingTimer = null;
+document.getElementById('q').addEventListener('input', e => {
+  term = e.target.value.toLowerCase().trim();
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => { painted = PAINT_STEP; render(); }, 120);
 });
-document.getElementById('more').addEventListener('click', () => { limit += 1000; load(); });
+// Debounced for the same reason as the search box. Anything that is not a number
+// clears that bound rather than filtering on NaN.
+let rangeTimer = null;
+document.querySelector('tr.ranges').addEventListener('input', e => {
+  const i = e.target.closest('input.rng');
+  if (!i) return;
+  const raw = i.value.trim();
+  const n = raw === '' ? null : Number(raw);
+  ranges[i.dataset.k] = { ...ranges[i.dataset.k], [i.dataset.b]: Number.isFinite(n) ? n : null };
+  saveRanges();
+  markRanges();
+  clearTimeout(rangeTimer);
+  rangeTimer = setTimeout(() => { painted = PAINT_STEP; render(); }, 120);
+});
+document.getElementById('clearranges').addEventListener('click', () => {
+  ranges = {};
+  saveRanges();
+  paintRangeInputs();
+  painted = PAINT_STEP;
+  render();
+});
+paintRangeInputs();
+
+document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('more').addEventListener('click', () => { painted += PAINT_STEP; render(); });
 
 load();
 </script>

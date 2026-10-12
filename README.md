@@ -1,7 +1,7 @@
 # ashby
 
 Finds ML engineering roles across Ashby-hosted job boards, scores them against your
-resume three different ways, and fills in the application forms.
+resume, and fills in the application forms.
 
 **You choose what to apply to, and you click submit.** Nothing here queues an
 application or sends one.
@@ -9,11 +9,10 @@ application or sends one.
 ```
                  ┌──────────────── the only network call
                  ▼
-  slugs.txt ─► poll ─► corpus.jsonl ─┬─► fitness    ─► should I apply
-                │      every posting │
-                │                    ├─► coverage   ─► what I can demonstrate
-                ▼                    │
-           fresh.jsonl ──────────────┴─► similarity ─► how close it reads to my resume
+  slugs.txt ─► poll ─► corpus.jsonl
+                │      every posting
+                ▼
+           fresh.jsonl ─────────────────► fitness    ─► am I qualified for this
           what still needs                    │
              scoring                          ▼
                                      ui ─► you pick ─► queue.jsonl ─► apply ─► [you submit]
@@ -42,8 +41,8 @@ copy config\me.example.json config\me.json
 copy config\context.template.md config\context.md
 ```
 
-- **`.env`** — `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` for embeddings (Anthropic has
-  no embeddings endpoint).
+- **`.env`** — `ANTHROPIC_API_KEY`, and `JEV_API_KEY` from TypeSafe AI, which scores
+  every posting.
 - **`config/me.json`** — name, email, phone, street and postcode, location, education,
   work authorization, pay expectations. Fills forms.
 - **`config/context.md`** — your hard constraints, preferences, project write-ups, and a
@@ -60,7 +59,7 @@ are told not to try, so a thin `context.md` produces empty fields rather than
 fabricated answers.
 
 > **A stale environment variable silently beats `.env`.** `dotenv` does not replace
-> variables that already exist, so an old `OPENAI_API_KEY` in your Windows User
+> variables that already exist, so an old API key in your Windows User
 > environment shadows the one you just set and every call 401s. This project passes
 > `override: true` so `.env` always wins — but if another tool misbehaves, that's why.
 
@@ -73,22 +72,24 @@ npm run poll
 ```
 
 Fetches every posting from every board into `corpus.jsonl`, then writes `fresh.jsonl` —
-the ones worth scoring. This is the only command that touches the network.
+the ones worth scoring. This is the only command that fetches postings.
 
 ```powershell
 npm run score
 ```
 
-Scores everything staged, on all three fronts. Each scorer skips what it has already
-done, so the order doesn't matter, re-running is free, and a posting stays on the
-worklist until all three have seen it. Run them individually with `npm run fitness`,
-`npm run coverage`, `npm run similarity` if you only want one.
+Scores everything staged: one Jev call per posting asking whether you are qualified for
+it, about $0.00012 each. It skips what it has already answered, so re-running is free,
+and a posting stays on the worklist until it has been scored. `npm run score` and
+`npm run fitness` are the same command; `npm run fitness -- --dry` prices a run first.
 
-Costs, per posting: **fitness** one call to your `ASHBY_MODEL`; **coverage** two Haiku
-calls; **similarity** a fraction of a cent. `npm run fitness -- --dry` prices a run
-before you commit to it.
+```powershell
+npm run levels
+```
 
-Each shows a progress bar with an ETA — a 150-posting fitness run is several minutes.
+Optional. For scored postings that publish no pay, looks the company up on levels.fyi
+and records what people there reported, so the board can show an estimate. Free, and
+anything looked up in the last 30 days is skipped. See **Pay estimates** under the board.
 
 ```powershell
 npm run ui
@@ -103,36 +104,68 @@ npm run apply
 Opens each queued posting, fills what it can, and stops.
 
 PowerShell 5.1 has no `&&` — chain with `;`. Flags need npm's separator:
-`npm run coverage -- --dry`.
+`npm run fitness -- --dry`.
 
 ---
 
 ## The board
 
-Every posting in one sortable table, all three scores side by side, `—` for anything
-not computed. They measure different things and routinely disagree — a role can have
-high coverage (you meet the listed requirements) and low fitness (it's the wrong kind
-of job entirely), which is the whole reason there are three columns.
+Every posting in one sortable table, `—` for anything not computed.
 
-Click a row for the model's reasoning, the requirement-by-requirement breakdown with
-evidence, and the description. Buttons: **queue for application**, **send to scorers**,
+**FITNESS**, the first column, is the one model score: Jev's answer to a single
+question — given the posting's title, company and whole description, and your resume,
+*is the candidate qualified for this job?* — as a probability. See **Fitness is the
+score** below for how it got there. Postings with no stored description are left blank
+rather than judged on a title.
+
+Click a row for its fitness, the pay sentence when pay came from the description, and
+the description itself. Buttons: **queue for application**, **send to scorers**,
 **not interested**.
 
-**stage top 25** in the header stages the 25 highest-similarity postings that still
-need scoring, respecting whatever filters are active. That is the way to put the
-embedding ranker's best guesses in front of the expensive scorers in bulk.
+**Score ranges** — the row of `min`/`max` boxes under fitness, fresh and value hides
+every posting outside them. Bounds are inclusive and compared at the two decimals the
+cell shows; bounds on different columns must all hold; a posting with no value for a
+bounded column is hidden. The ranges only hide rows — unlike the header toggles they
+refetch nothing, so `value` does not re-scale as you narrow. **clear ranges** resets them;
+otherwise they are remembered in that browser.
+
+**Pay** — the pay column takes its figure from three places, in order:
+
+1. the posting's own pay field;
+2. pay stated in the description — many postings leave the field empty and write
+   "Salary range: $150,000 to $250,000 USD annually" into the text instead. Read by
+   `lib/pay-text.js` and drawn like posted pay; hover says it came from the
+   description, and the expanded row quotes the sentence. Ranges are read anywhere; a
+   single figure only in a sentence about pay; millions, funding rounds and benefits
+   ("up to $25K reimbursement", "housing subsidy of $2,500 per month") never. Regional
+   bands give their full span; USD is preferred when a posting lists several
+   currencies;
+3. only then a levels.fyi estimate.
+
+**Pay estimates** — where a posting states no pay anywhere, the pay column can show a
+levels.fyi estimate in italics, marked **est.**, once `npm run levels` has run:
+
+- **exact** — the posting's title is one of the company's own level titles;
+- **same level** — the same seniority (Senior, Staff, Lead…) at that company;
+- **all levels** — the company's US base across every level, shown as its 25th–75th
+  percentile, when the title carries no seniority to match on.
+
+The line under it names the level and how many submissions it rests on (`n=`), and the
+tooltip gives the source and total comp. US figures only: levels.fyi's company-wide
+numbers sometimes describe another country even on its US page, and those are dropped.
+A company with no levels.fyi page or no usable US data gets nothing — never a market
+rate or another company's numbers. Many smaller companies have only a handful of
+submissions; weigh `n=` accordingly.
+
+Estimates are for reading only. Nothing that filters, ranks or scores postings reads
+them, and sorting by pay ranks published pay alone. Glassdoor and Indeed are not used:
+both answer automated requests with a bot check.
 
 Queueing is the only thing that writes `queue.jsonl`, and `apply` reads nothing else.
 **Not interested** writes `dismissed.jsonl` and keeps `poll` from proposing it again —
 reversible, and the only "no" the system records.
 
-Three of the columns are derived, and they are what you actually sort on:
-
-**score** — the geometric mean of fitness, coverage and similarity, each min-maxed
-across the rows currently shown. Geometric, not average, so a posting has to be decent
-on all three rather than buying its way up with one. It is relative: a 0.2 fitness is
-the best score in a set where nothing beats 0.2, and it re-scales when you change the
-filters.
+Two of the columns are derived, and they are what you actually sort on:
 
 **fresh** — how much of its value the posting still has, with its age underneath. Halves
 every 7 days: listed today 1.00, a week old 0.50, a month 0.05. Exponential because
@@ -141,17 +174,18 @@ has lost ground to everyone who applied first, and 200 versus 300 days is nothin
 absolute, so a posting does not become fresher because something older turned up beside
 it. `HALF_LIFE_DAYS` in `lib/composite.js` if you want it gentler.
 
-**value** — the average of score and fresh. Half of it is how good the match is, half is
-whether it is still worth chasing. This is the default sort.
+**value** — the geometric mean of fitness and fresh. Fitness is min-maxed across the
+rows currently shown first: it runs low (a mean of about 0.35) while freshness spans the
+whole of 0..1, so unscaled, freshness would quietly outweigh it. That makes the fitness
+half relative — the best fit in view counts as 1 — and it re-scales when you change the
+filters. Geometric, not average, so a posting has to be decent on both: a perfect fit
+listed months ago does not outrank a good match posted this week. This is the default
+sort; sort by **fitness** for the best matches regardless of age.
 
-All three are blank until their inputs exist; an unscored posting is unknown, not bad.
+Both are blank until their inputs exist; an unscored posting is unknown, not bad.
 Parts are floored at 0.02 before the geometric mean, because min-max always puts the
-lowest row at exactly 0 on its axis and a geometric mean with a zero in it is zero —
-without the floor those rows collapse and lose every distinction below them.
-
-The split is the useful part. Sorting by **score** gives the best matches regardless of
-age; sorting by **value** gives what is worth doing something about today. On the live
-board they disagree sharply — the top four by score are 92 to 215 days old.
+lowest row at exactly 0 and a geometric mean with a zero in it is zero — without the
+floor those rows collapse and lose every distinction below them.
 
 Freshness is not min-maxed. It **halves every 7 days** — listed today scores 1.00, a
 week old 0.50, a fortnight 0.25, a month 0.05, and anything past two months is
@@ -160,10 +194,6 @@ linear scale does not express that. It is also absolute, so a posting does not g
 fresher because something older turned up beside it. `HALF_LIFE_DAYS` in
 `lib/composite.js` if you want it gentler.
 
-Scores drift between runs on identical input. The score column shows the spread when a
-posting has been judged more than once; anything straddling your threshold is being
-sorted by variance, not by fit.
-
 ---
 
 ## Every command
@@ -171,13 +201,12 @@ sorted by variance, not by fit.
 | Command | What it does |
 |---|---|
 | `npm run poll` | Fetch every board into `corpus.jsonl`, rewrite `fresh.jsonl` with what still needs scoring. `--dry`, `--no-crawl`, `--all` (ignore title filter), `--anywhere` (ignore location), `--limit N`, `--jobs N` (boards fetched at once, default 12), `--ats ashby|greenhouse` (fetch just one), `--full` (store every description). |
-| `npm run score` | All three scorers over the worklist. |
-| `npm run fitness` | Should you apply — a judgement weighing role, seniority, pay, your constraints. `--dry`, `--force`, `--jobs N` (requests at once, default 6). |
-| `npm run coverage` | Extract each posting's requirements, score the resume against them one by one. `--dry`, `--limit N`, `--force`, `--scorer opus`, `--show`, `--jobs N` (requests at once, default 6). |
-| `npm run similarity` | Embed the staged postings and the resume, so they have a similarity score. `--dry` prices it first, `--force` re-embeds regardless, `--corpus` embeds the whole corpus rather than just the worklist. |
+| `npm run score` | The same as `npm run fitness`. |
+| `npm run fitness` | Score the worklist: asks Jev whether you are qualified, given the whole posting and your resume, about $0.00012 each. `--dry` (price it), `--limit N`, `--force` (ask again even if answered), `--rescore` (ask again for every posting ever scored whose answer is to an older version of the question), `--jobs N` (requests at once, default 6). |
+| `npm run levels` | levels.fyi pay estimates for scored US postings that state no pay, in their pay field or their description. Display only. `--dry` (list the pages, fetch nothing), `--refresh` (ignore the 30-day memory), `--limit N` (at most N company pages), `--jobs N` (pages at once, default 1), `--delay MS` (wait between pages, default 1500 — levels.fyi has a bot check and stops the run when it trips). |
 | `npm run ui` | The board. `--port N`, `--no-open`. |
+| `npm run cost` | What the model calls have cost, by what spends it. `--last` (the most recent run), `--runs` (one line per run), `--batch` (the same totals at the Batch API's 50%). |
 | `npm run apply` | Fill the queued forms, then ask whether you submitted each one. `--no-model` (rules only, no API call), `--limit N`, `--url <apply-url>`, `--wait-parse N` (seconds to wait for Ashby's resume parser, default 3). |
-| `npm run gaps` | What you keep missing, aggregated across everything. `--required`, `--slug`, `--since`, `--cluster`, `--csv out.csv`. |
 | `npm run harvest` | Find and validate new company boards. `--discover` searches the four crawl sources; `--wayback`, `--hn`, `--github`, `--commoncrawl` each pick one; `--yc` guesses from the YC directory (opt-in, see below); `--greenhouse` harvests Greenhouse boards instead of Ashby; with none of those it reads `data/raw.txt`. `--no-recheck` skips re-validating boards you already have. |
 | `npm run test-fill` | Run the form filler headless against any apply URL. No model, no submit. |
 | `npm run check-docs` | Fail if this README has drifted from the code. |
@@ -209,7 +238,105 @@ it refused are **red**:
 - **Anything not answerable from `context.md`.** The model skips rather than guessing,
   because a plausible invented answer on a job application is worse than a gap.
 
+### Fitness is the score
+
+One model score, from [Jev](https://docs.typesafe.ai) (TypeSafe AI): each posting's title,
+company and whole description, and your resume, with one yes/no question — *is the
+candidate qualified for this job?* — answered as a probability, about $0.00012 a posting.
+
+It is the last of several. Embedding similarity, a Sonnet judgement of fit, a combined
+`score`, and requirement coverage (Haiku extracting each posting's requirements, Jev
+asking whether the resume shows each one) were all dropped on 2026-10-02. Coverage went
+last, after 100 postings where it and fitness disagreed by 0.25 or more were judged by
+hand: fitness was closer in 90, with a mean error of 0.08 against coverage's 0.35.
+Coverage averaged the requirements that decide a job — a PhD, ten years, Staff level —
+in with generic ones anyone meets, and ran about a third of a point optimistic. Fitness
+reads the posting whole; its weakness is running a little low on genuine fits, which
+the min-max scaling in `value` absorbs.
+
+Answers are cached per description, resume and version of the question. The version
+changed when the extracted requirements left the question, so `npm run fitness --
+--rescore` asks again for everything scored before that. Jev's spend is printed by the
+command itself; `npm run cost` only counts Anthropic calls.
+
+Their data files were deleted the same day.
+
+### The board stays responsive
+
+The table ships only what a row draws — 0.2 MB for 600 rows. Descriptions are fetched
+per posting when you expand it, and kept, so collapsing and re-expanding costs nothing.
+
+Every matching row is sent and sorted, but only 300 are painted at a time; "show more"
+paints another 300 without refetching. Painting all 2,871 was 48,000 DOM nodes and
+about 290ms of layout on every render.
+
+The board sends the whole filtered candidate set (~2,900 rows, under a megabyte) and
+orders it by `value`, the same column the page sorts on. It used to order by fitness
+(since dropped) and send the top 600, which silently dropped every posting under two
+days old — they scored below the fitness cutoff and never reached the browser at all.
+
+That was 5.8 MB before, all of it rebuilt as HTML on every keystroke in the filter
+box, including 600 detail panes hidden behind CSS. Typing was unusable. The filter is
+also debounced now, and `corpus.jsonl` is cached on mtime rather than re-parsed per
+request — 246,000 postings is about 1.5 seconds a parse, and it was paying that on
+every board load *and* every row you opened.
+
+Measured after: 8 keystrokes block the main thread for 0 ms; `/api/detail` returns in
+under 100 ms.
+
+### A posting that cannot finish
+
+A posting is only *finished* once it has a fitness score, and `poll` re-stages anything
+that isn't — so a posting that can never get one is re-staged on every run, forever.
+
+**Re-listed postings.** Answers are cached by content — title, company, location and
+description, paired with the resume — but recorded under a posting id, and
+`finished()` looks postings up *by id*. When a company deletes and re-posts a job the
+description is byte-identical, so the answer exists while nothing downstream sees it.
+The answer is copied to the new id, free, and the run says so (`re-listed, copied
+free: N`).
+
+**Postings with no description.** Judging one on its title alone would be a confident
+number about nothing, so it is skipped and counted (`N skipped, no description`). It
+still won't finish; dismiss it from the board if you want it gone.
+
+### What a run costs
+
+```powershell
+npm run cost
+```
+
+Every model call appends its `usage` to `data/usage.jsonl`, so this is measured
+rather than estimated. Measured over ~1,000 postings:
+
+| | share of the bill | per posting |
+|---|---|---|
+| fitness (Sonnet 5, effort `high`) — since dropped | 73% | $0.0080 |
+| coverage — extract (Haiku) — since dropped | 17% | $0.0034 |
+| coverage — score (Haiku, then Jev) — since dropped | 10% | $0.0049 |
+
+That was the bill while those scorers ran. Scoring is now a single Jev call, about
+$0.00012 a posting, and no Anthropic tokens at all; `apply` is the Anthropic spend.
+
+`--runs` separates concurrent runs. Two scoring runs at once write to the same log,
+and before run ids existed their spend blended.
+
 ### How long a run takes
+
+`poll` fetches every board on both systems — around 10,000 of them, a few minutes —
+and shows a bar with an ETA while it does. Greenhouse's API sometimes sits on a request
+for up to 20 seconds before answering; a board that has not started responding within
+3 seconds is asked again (up to three tries), so those stalls no longer set the pace:
+
+```
+Ashby: 3918 boards
+Greenhouse: 6103 boards
+fetching boards [█████████               ]  38%  3820/10021  ~2m 14s left
+```
+
+Selecting from the corpus afterwards takes a couple of seconds. It used to read the
+whole 190 MB file four times in one run; it reads it once.
+
 
 Scoring is almost entirely waiting on the API, so it runs several requests at once.
 Measured on 24 postings:
@@ -282,7 +409,11 @@ if you would rather answer these yourself.
 Then it stops and asks:
 
 ```
-  Submitted?  [y] yes · [n] no, move on · [k] not yet, keep it queued · [s] stop here:
+  Submitted?
+    [y] yes, submitted
+    [n] no, drop from queue
+    [k] not yet, keep in queue
+    [s] stop here, keep in queue
 ```
 
 Nothing here submits anything, so this is your answer rather than something the tool
@@ -294,7 +425,7 @@ interrupt keeps everything you already dealt with.
 | `y` | logged as submitted, dropped from the queue, shows **submitted** on the board |
 | `n` | logged, dropped from the queue, shows **opened** — seen, not sent |
 | `k` | stays in the queue and the tab stays open, so the next run reopens it |
-| `s` | stops the run; the rest of the queue is untouched |
+| `s` | stops the run; this posting stays in the queue along with the rest |
 
 The board separates the two: **submitted** means you said yes. Opening a form and
 closing it used to count as applying, which made the board claim applications that
@@ -327,10 +458,26 @@ So a Greenhouse posting almost always shows no pay. That is the board being hone
 rather than a bug: the hard pay filter passes anything unstated, and the salary ask
 falls back to your `me.json` figure with no floor to clear.
 
-**`apply` only fills Ashby forms.** `lib/fill.browser.js` reads Ashby's DOM
-specifically, and a Greenhouse form has none of it — so `apply` says so and opens
-nothing rather than producing a page of red. Greenhouse ones you fill yourself; the
-board marks which is which.
+**`apply` fills both boards.** `lib/fill.browser.js` detects which one it is on and
+reads the matching DOM — Ashby's `[data-field-path]` entries, or Greenhouse's
+`#application-form` with its `.field-wrapper`, `.select__container` and `.file-upload`
+containers. Anything else is still refused and opened not at all, rather than
+producing a page of red.
+
+Which board a posting belongs to is decided by `atsOf()`, which prefers the record's
+own `ats` field and otherwise infers from the `greenhouse:` id prefix and the board
+host. It has to infer, because queue rows used to be copied from the fitness record,
+which did not always carry the field — which is how a Greenhouse posting once spent 30 seconds
+waiting for an Ashby selector before failing.
+
+**One Greenhouse limitation.** Its comboboxes are react-select, which ignores the
+synthesized pointer events the in-page filler dispatches. Self-identification is
+handled from outside the page with a trusted click, so gender, ethnicity, veteran and
+disability are declined properly. Other Greenhouse comboboxes — country, "are you
+authorized to work", and similar — cannot be filled in-page and are reported as *not
+applied* rather than claimed. Every fill now verifies itself and fails if the field is
+still empty afterwards, because a rule that reports success without effect is worse
+than one that fails.
 
 ### What the corpus stores
 
@@ -412,14 +559,10 @@ is using on every run.
 is at the top of `bin/poll.js`. Changes take effect on the next `poll`; there is nothing
 to invalidate, because the worklist is recomputed each run.
 
-**Re-judging everything** — a posting is a candidate until it has been scored, so move
-the score file aside rather than deleting it:
+**Re-scoring everything** — `npm run fitness -- --rescore --force` asks again for every
+posting ever scored.
 
-```powershell
-move data\fitness.jsonl data\fitness.old.jsonl
-```
-
-**Model** — `claude-opus-5` by default: `$env:ASHBY_MODEL = "claude-sonnet-5"`.
+**Model** — `apply` asks `claude-opus-5` by default: `$env:ASHBY_MODEL = "claude-sonnet-5"`.
 
 **More companies** — Ashby has no cross-org search; each company has its own board at
 `api.ashbyhq.com/posting-api/job-board/{slug}`, so coverage is entirely a question of
@@ -496,15 +639,15 @@ work from any directory.
 |---|---|
 | `slugs.txt` | Validated board slugs. Grows; never shrinks. |
 | `corpus.jsonl` | Every posting from every board, unfiltered. The only store of postings. |
-| `fresh.jsonl` | The worklist: staged, not yet scored on all three fronts. Rewritten by `poll`, read by every scorer, consumed by none. |
-| `fitness.jsonl` | Append-only log of every judgement, re-scores included. |
-| `coverage.jsonl` | Per-requirement scores and the evidence for each. |
-| `requirements.jsonl` | Requirements extracted per posting, cached by content hash. |
-| `vectors.jsonl` | Embeddings, base64 float32, keyed by content hash. |
+| `fresh.jsonl` | The worklist: staged, not yet scored. Rewritten by `poll`, read by every scorer, consumed by none. |
+| `jev-fitness.jsonl` | The score: Jev's probability that you are qualified, per posting, resume version and version of the question. Written by `npm run fitness`; read by the board, `poll` and `levels`. Newest per posting wins. |
 | `queue.jsonl` | What you picked. The only input to `apply`. |
 | `dismissed.jsonl` | What you said no to. |
+| `pay-estimates.jsonl` | levels.fyi estimates from `npm run levels`, one line per posting looked up — misses included, so they are not asked again for 30 days. Newest per posting wins. Read by the board only. |
+| `config/levels-companies.json` | Optional, yours. Board slug → levels.fyi company slug where they differ (`{"andurilindustries": "anduril"}`); `null` never looks that company up. |
 | `log.jsonl` | One line per apply attempt: what filled, what failed, what was left red. |
 | `dead.txt` · `raw.txt` · `candidates.txt` | Slug harvesting: rejected, pending, and the shipped seed list. |
+| `usage.jsonl` | One line per model call: run id, label, model, effort, and the `usage` object. What `npm run cost` reads. |
 | `greenhouse-slugs.txt` · `greenhouse-dead.txt` | The same two lists for Greenhouse. Kept separate so a token that collides with an Ashby slug cannot confuse either. |
 
 ---
@@ -517,8 +660,8 @@ npm test
 
 Node's built-in runner over `test/`. No framework, no dependency. Covers the places
 where being wrong is silent: salary parsing (hourly and monthly annualising, currency,
-unstated pay), the title and location filters, whitespace normalising, the vector
-maths, pay-floor parsing, and candidate selection end to end.
+unstated pay), the title and location filters, whitespace normalising, pay-floor
+parsing, and candidate selection end to end.
 
 Written test-first — the failing test goes in before the implementation, and a bug gets
 a test reproducing it before it gets a fix. Tests never touch real data:

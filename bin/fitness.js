@@ -1,192 +1,93 @@
-// Judge staged postings against the resume and context.md — should you apply.
+// Fitness — the score: is the candidate qualified for this job, asked of Jev.
 //
-//   npm run fitness              judge anything in fresh.jsonl not judged before
-//   npm run fitness -- --dry     report what would be judged, call nothing
-//   npm run fitness -- --force   re-judge even what has been judged before
+//   npm run fitness              score everything staged in fresh.jsonl
+//   npm run fitness -- --dry     price it, call nothing
+//   npm run fitness -- --limit 20
+//   npm run fitness -- --force   ask again even if answered
+//   npm run fitness -- --rescore ask again for every posting ever scored whose answer
+//                                is to an older version of the question
+//   npm run fitness -- --jobs 6  requests at once (default 6)
 //
-// One of three scorers over the same worklist. It does not consume fresh.jsonl:
-// coverage.js reads it too, and truncating here used to leave coverage nothing to
-// do whenever fitness happened to run first.
-//
-// Postings are referenced by array index, not id: the model echoing a 36-char
-// UUID back is a chance to hallucinate one, and a wrong id silently drops a job.
+// One Jev request per posting: its title, company and whole description, and the
+// resume, with one yes/no question. P(yes) is fitness, and value is the geometric mean
+// of it (scaled) and freshness. See lib/jev-fitness.js for why it is the only score.
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
-import { z } from 'zod';
-import { ask, context, MODEL, preflight } from '../lib/ai.js';
-import { resumeBlock } from '../lib/resume.js';
+import { corpus, hash, linesOf } from '../lib/corpus.js';
+import { resumeText } from '../lib/resume-text.js';
 import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
-import { completeBatch } from '../lib/batch.js';
-import { isAuthError } from '../lib/keys.js';
+import { isAuthError, requireKey } from '../lib/keys.js';
+import { appendRows } from '../lib/jsonl.js';
+import { jevAsk } from '../lib/jev.js';
+import { fitnessRequest, worklistWork, rescoreWork, fitnessRow } from '../lib/jev-fitness.js';
+import '../lib/ai.js';            // loads .env with override, so a stale shell variable cannot win
 
-const BATCH = 8;
-const FORCE = process.argv.includes('--force');
-const DRY   = process.argv.includes('--dry');
-const JOBS  = jobsFlag(process.argv);
+const argv    = process.argv.slice(2);
+const DRY     = argv.includes('--dry');
+const FORCE   = argv.includes('--force');
+const RESCORE = argv.includes('--rescore');
+const LIMIT   = argv.includes('--limit') ? Number(argv[argv.indexOf('--limit') + 1]) : Infinity;
+const JOBS    = jobsFlag(argv);
 
-const readJsonl = f => fs.existsSync(f)
-  ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
-  : [];
+// Jev bills input tokens only, $0.042 per million.
+const USD_PER_TOKEN = 0.042 / 1e6;
 
-if (!fs.existsSync(P.fresh)) { console.log('no fresh.jsonl — run: npm run poll'); process.exit(0); }
-const staged = readJsonl(P.fresh);
-if (!staged.length) { console.log('fresh.jsonl is empty — run: npm run poll'); process.exit(0); }
-
-// Skip what has already been judged. fresh.jsonl is a worklist that coverage.js
-// reads too, so this must not consume it — and being idempotent is what lets the
-// three scorers run in any order without stranding each other's work.
-const already = new Set(readJsonl(P.fitness).map(r => r.id));
-const jobs = FORCE ? staged : staged.filter(j => !already.has(j.id));
-
-console.log(`${staged.length} staged · ${staged.length - jobs.length} already judged · ${jobs.length} to judge`);
-if (!jobs.length) { console.log('nothing to do'); process.exit(0); }
-if (DRY) { console.log('--dry, nothing called'); process.exit(0); }
-
-// Once, before any work — see coverage.js.
-try { preflight(); } catch (e) { console.error(`
-${e.message}`); process.exit(1); }
-
-const Scored = z.object({
-  results: z.array(z.object({
-    index:       z.number().int().describe('the index attribute of the posting this scores'),
-    fitness:     z.number().min(0).max(1),
-    pay_ok:      z.string().describe('exactly one of: yes, no, not_stated'),
-    location_ok: z.boolean(),
-    why:         z.string().describe('one sentence, concrete, names the actual overlap or mismatch'),
-    concerns:    z.array(z.string()),
-  })),
-});
-
-const RESUME = resumeBlock();
-
-const SYSTEM = `You rate how well job postings fit one candidate. Their resume is attached as a
-document, and additional context follows below.
-
-Score honestly — a queue full of 0.8s is useless. Reserve >=0.8 for postings where the
-candidate's specific, demonstrated experience is what the posting asks for. Score down for
-seniority mismatch, a stack the candidate has never touched, and domains the context says
-they do not want. Ignore generic startup boilerplate.
-
-You are ranking, not deciding. The candidate chooses what to apply to; your job is an
-honest score and a reason they can act on.
-
-Rules:
-- pay_ok="not_stated" when the posting states no range; do not guess from the company.
-- location_ok reflects the candidate's stated location constraints, not a general preference for remote.
-- "why" must name the actual overlap or the actual mismatch. "Strong fit for the role" is not an answer.
-- Return one result per posting, using the index attribute given on each posting.
-
-<candidate_context>
-${context()}
-</candidate_context>`;
-
-const out = [];
-const bar = progress(jobs.length, 'judging');
-
-// Postings are grouped BATCH to a request, and the requests then run a few at a
-// time. Sequentially this was ~40s per request — 40 minutes for 477 postings,
-// almost all of it waiting on one round trip at a time.
-const groups = [];
-for (let i = 0; i < jobs.length; i += BATCH) groups.push(i);
-
-const describe = (j, index) => {
-  const pay = j.salary ? j.salary.summary : 'not stated';
-  return `<posting index="${index}">
-title: ${j.title}
-company (ashby slug): ${j.slug}
-team: ${j.department ?? '?'} / ${j.team ?? '?'}
-location: ${j.location} | also: ${j.secondaryLocations || 'none'} | remote: ${j.isRemote}
-type: ${j.employmentType}
-posted: ${j.publishedAt}
-stated pay: ${pay}
-
-${(j.descriptionPlain || '(no description)').slice(0, 7000)}
-</posting>`;
+const rowsOf = f => {
+  if (!fs.existsSync(f)) return [];
+  const out = [];
+  for (const l of linesOf(f)) { try { out.push(JSON.parse(l)); } catch {} }
+  return out;
 };
 
-const outcomes = await pool(groups, async (i) => {
-  const batch = jobs.slice(i, i + BATCH);
-  const want = batch.map((_, k) => i + k);
+const resume = await resumeText();
+const resumeHash = hash(resume);
+const done = rowsOf(P.jevFitness);
 
-  // Structured output guarantees the SHAPE of the reply, not that it covers every
-  // posting asked about. A batch of 8 coming back with 7 results used to leave the
-  // 8th silently unscored — 1.9% of postings on a real run. Ask again for the gaps.
-  const { results, missing } = await completeBatch(want, async (indices) => {
-    const user = indices.map(ix => describe(jobs[ix], ix)).join('\n\n');
-    const { results } = await ask(SYSTEM, user, { schema: Scored, maxTokens: 8000, documents: [RESUME] });
-    return results;
-  });
+// The worklist is fresh.jsonl, like any scorer's. --rescore instead walks every
+// posting already scored, reading its description from the corpus.
+const { work, blank, reuse } = RESCORE
+  ? rescoreWork(done, corpus(), resumeHash, { hash, force: FORCE })
+  : worklistWork(rowsOf(P.fresh), done, resumeHash, { hash, force: FORCE });
+const todo = work.slice(0, LIMIT);
 
-  const rows = [];
-  for (const r of results) {
-    const j = jobs[r.index];
-    if (!j) { console.warn(`  ! model returned index ${r.index}, no such posting — dropped`); continue; }
-    rows.push({
-      ...r,
-      id: j.id, title: j.title, slug: j.slug,
-      location: j.location, salary: j.salary,
-      jobUrl: j.jobUrl, applyUrl: j.applyUrl,
-      scoredAt: new Date().toISOString(), model: MODEL,
-    });
-  }
-  for (const ix of missing) {
-    console.warn(`\n  ! no result for "${jobs[ix].title}" after a retry — not scored`);
-  }
-  // Ticked here rather than in onDone: a group is BATCH postings, and the bar
-  // counts postings, so the caller is the only place that knows the size.
-  bar.tick(batch.length);
-  return rows;
-}, {
-  limit: JOBS,
-  // The first request writes the prompt cache (context.md + the resume PDF) and
-  // the rest read it. Opening at full width makes the whole first wave miss, and
-  // each one pays the write premium instead of one paying it.
-  warmup: true,
-  // One bad key is the same answer for every posting; stop rather than repeat it.
-  stopOn: isAuthError,
-});
+const chars = todo.reduce((n, w) => n + Math.min(String(w.posting.descriptionPlain ?? w.posting.description).length, 60_000) + resume.length, 0);
+const tokens = Math.round(chars / 4) + todo.length * 150;
+console.log(`${work.length} posting${work.length === 1 ? '' : 's'} to score` +
+  (RESCORE ? ' again (older answers)' : ' from fresh.jsonl') +
+  (blank.length ? ` · ${blank.length} skipped, no description` : ''));
+console.log(`  asking ${todo.length} · about ${tokens.toLocaleString()} tokens, $${(tokens * USD_PER_TOKEN).toFixed(4)}`);
+if (reuse.length) console.log(`  re-listed, copied free: ${reuse.length}`);
+if (DRY) { console.log('\n--dry, nothing called'); process.exit(0); }
 
-if (outcomes.stopped) {
-  bar.finish();
-  console.error(`
-  stopped: ${outcomes.stopped.message}`);
-  console.error('  nothing further was attempted. Fix the key and re-run.');
-}
+// Re-listings: same description under a new id. The answer is copied, not paid for —
+// and before the exit below, because a run whose only work is this still has work.
+// Without the copy, finished() (which looks postings up by id) never sees them.
+if (reuse.length) appendRows(P.jevFitness, reuse);
+if (!todo.length) { console.log('\nnothing to do'); process.exit(0); }
 
-// Collected here rather than pushed from inside the worker, so the order of
-// fitness.jsonl does not depend on which request happened to return first.
-for (const [gi, o] of outcomes.entries()) {
-  if (o.ok) { out.push(...o.value); continue; }
-  const size = Math.min(BATCH, jobs.length - groups[gi]);
-  console.warn(`\n  ! a batch of ${size} failed: ${o.error.message}`);
-  bar.tick(size);   // a failed batch never ticked itself
+// Once, before any work: a bad key is the same answer for every posting.
+try { requireKey('JEV_API_KEY'); } catch (e) { console.error(`\n${e.message}`); process.exit(1); }
+
+let spent = 0, scored = 0;
+const bar = progress(todo.length, 'fitness');
+const results = await pool(todo, async (w) => {
+  const { state, questions } = fitnessRequest(w.posting, resume);
+  const res = await jevAsk({ state, questions });
+  spent += res.usage?.input_tokens ?? 0;
+  // Written as it lands: an interrupted run keeps every answer it paid for.
+  appendRows(P.jevFitness, [fitnessRow(w, resumeHash, res)]);
+  scored++;
+}, { limit: JOBS, onDone: () => bar.tick(), stopOn: isAuthError });
+
+if (results.stopped) {
+  // Left where it stopped, rather than a full bar claiming work that never happened.
+  process.stderr.write('\n');
+  console.error(`stopped after ${scored} of ${todo.length}: ${results.stopped.message}`);
+  process.exit(1);
 }
 bar.finish();
-
-const read = f => fs.existsSync(f)
-  ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
-  : [];
-
-// fitness.jsonl is the permanent log: append-only, one line per scoring event,
-// re-scores included. Nothing here queues anything — queue.jsonl is written only
-// when you pick a posting in the UI, so a score can never put an application in
-// front of you that you did not choose.
-fs.appendFileSync(P.fitness, out.map(r => JSON.stringify(r)).join('\n') + (out.length ? '\n' : ''));
-// fresh.jsonl is a worklist, not a queue to drain. Truncating it here meant that
-// running fitness before coverage left coverage nothing to do, silently.
-
-out.sort((a, b) => b.fitness - a.fitness);
-const queued  = new Set(read(P.queue).map(r => r.id));
-const applied = new Set(read(P.log).map(r => r.job));
-
-console.log(`\n${out.length} scored\n`);
-for (const r of out) {
-  const pay = r.pay_ok === 'not_stated' ? 'pay not stated' : r.salary?.summary ?? r.pay_ok;
-  const mark = applied.has(r.id) ? ' [applied]' : queued.has(r.id) ? ' [queued]' : '';
-  console.log(`  ${r.fitness.toFixed(2)}  ${r.title} — ${r.slug}  (${pay})${mark}`);
-  console.log(`        ${r.why}`);
-  if (r.concerns.length) console.log(`        concerns: ${r.concerns.join('; ')}`);
-}
-console.log(`\nPick what to apply to:  npm run ui`);
+const failed = results.filter(r => r && !r.ok);
+console.log(`${scored} scored · ${spent.toLocaleString()} Jev input tokens, $${(spent * USD_PER_TOKEN).toFixed(4)}` +
+  (failed.length ? ` · ${failed.length} failed: ${failed[0].error.message}` : ''));

@@ -1,8 +1,8 @@
 // Stage 1 — the only thing that talks to the job boards.
 //
 // Fetches every posting from every board into corpus.jsonl, then stages the ones
-// worth scoring into fresh.jsonl. fitness, coverage and similarity all read from
-// what this stored; none of them fetch.
+// worth scoring into fresh.jsonl. fitness reads from what this stored; it does not
+// fetch.
 //
 //   npm run poll                normal daily run
 //   npm run poll -- --no-crawl  select from the corpus as it stands, fetch nothing
@@ -15,14 +15,14 @@
 // any more: crawl.js pulls every board into corpus.jsonl and this picks from it.
 //
 // "New" is derived, not tracked. A posting is a candidate when nothing has judged it
-// (fitness.jsonl, coverage.jsonl), nothing has staged it (fresh.jsonl), and you have
+// (jev-fitness.jsonl), nothing has staged it (fresh.jsonl), and you have
 // not dismissed it (dismissed.jsonl). There is no seen.json to drift out of step.
 
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { P, ensureDirs } from '../lib/paths.js';
 import { corpus } from '../lib/corpus.js';
-import { candidates, finished, vectorIds } from '../lib/select.js';
+import { candidates, finished } from '../lib/select.js';
 import { minimumBase, constraintLines } from '../lib/constraints.js';
 
 const argv    = process.argv.slice(2);
@@ -64,16 +64,11 @@ console.log();
 
 const store = corpus();
 
-// Finished means scored on every front — all THREE. A posting one scorer has seen
-// and another has not is still work, and must stay on the worklist; every scorer
-// reads only fresh.jsonl, so dropping it here makes the gap permanent.
-//
-// Similarity was missing from this check, which is how 15 postings ended up with
-// fitness and coverage, no vector, and therefore no rank at all.
-const withFitness  = new Set(read(P.fitness).map(r => r.id));
-const withCoverage = new Set(read(P.coverage).map(r => r.id));
-const withVector   = vectorIds(read(P.vectors));
-const done = finished({ fitness: withFitness, coverage: withCoverage, vectors: withVector });
+// Finished means scored on every front — Jev's fitness, the only one since
+// 2026-10-02. A posting without it is still work, and must stay on the worklist; the
+// scorer reads only fresh.jsonl, so dropping it here makes the gap permanent.
+const withFitness = new Set(read(P.jevFitness).map(r => r.id));
+const done = finished({ fitness: withFitness });
 const dismissed = new Set(read(P.dismissed).map(r => r.id));
 
 const picked = candidates(store, {
@@ -81,15 +76,10 @@ const picked = candidates(store, {
   us: !ANYWHERE, all: ALL, minPay, maxAgeDays: MAX_AGE_DAYS,
 }).slice(0, LIMIT);
 
-// All three fronts are reported, counted over the same population — the postings
-// that have been scored at all. vectors.jsonl also holds vectors for postings no
-// scorer has touched, and reporting that total here would compare three numbers
-// against a fourth thing. Printing only two fronts is what let a missing vector
-// strand a posting unnoticed.
-const anyScore = new Set([...withFitness, ...withCoverage]);
-const embeddedOfThose = [...anyScore].filter(id => withVector.has(id)).length;
-console.log(`${store.size} in the corpus · ${withFitness.size} with fitness · ` +
-            `${withCoverage.size} with coverage · ${embeddedOfThose} embedded · ` +
+// Every front finished() checks is reported. Printing fewer is what once let a
+// missing score strand a posting unnoticed.
+console.log(`${store.size} in the corpus · ` +
+            `${withFitness.size} with fitness · ` +
             `${done.size} finished` +
             (dismissed.size ? ` · ${dismissed.size} dismissed` : ''));
 console.log(`${picked.length} posting${picked.length === 1 ? '' : 's'} still to score\n`);

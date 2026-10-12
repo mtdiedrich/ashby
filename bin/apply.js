@@ -12,12 +12,18 @@
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
+import { atsOf, formSelectors } from '../lib/ats.js';
+import { declineDemographics } from '../lib/decline.js';
+
+// The boards fill.browser.js has a DOM adapter for.
+const FILLABLE = new Set(['ashby', 'greenhouse']);
+
 import readline from 'node:readline';
 import { chromium } from 'playwright';
 import { z } from 'zod';
 import { ask, context, MODEL } from '../lib/ai.js';
 import { resumeBlock, resumeFile } from '../lib/resume.js';
-import { appliedIds, dropFromQueue } from '../lib/applog.js';
+import { appliedIds, dropFromQueue, answerEffect, SUBMITTED_PROMPT } from '../lib/applog.js';
 
 const readJsonl = f => fs.existsSync(f)
   ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
@@ -119,12 +125,20 @@ for (const [i, job] of queue.entries()) {
 
   console.log(`\n${'─'.repeat(70)}\n[${i + 1}/${queue.length}] ${job.title} — ${job.slug}\n${url}`);
 
-  // lib/fill.browser.js reads Ashby's form DOM specifically — [data-field-path] and
-  // the ashby-application-form-* classes. A Greenhouse form has none of them, so
-  // every rule would miss and the model would be handed an empty field list. Say so
-  // and open nothing, rather than produce a page of red and call it a result.
-  if ((job.ats ?? 'ashby') !== 'ashby') {
-    console.log(`  ${job.ats} form — apply.js only fills Ashby's. Open it yourself.`);
+  // lib/fill.browser.js now reads both boards: Ashby via [data-field-path] and the
+  // ashby-application-form-* classes, Greenhouse via #application-form and its
+  // .field-wrapper / .select__container / .file-upload containers. Anything else
+  // would hand the model an empty field list, so it is still refused rather than
+  // opened to produce a page of red and call it a result.
+  //
+  // Not `job.ats ?? 'ashby'`: the queued row used to be the fitness row, and
+  // fitness's rowsFrom() never copied `ats`, so every Greenhouse posting read as
+  // Ashby here and hung 30s on [data-field-path]. Queue rows are built from the
+  // corpus now, but rows already on disk may not carry the field. atsOf() infers from the id prefix and the board host, so
+  // rows already on disk without the field route correctly too.
+  const ats = atsOf(job);
+  if (!FILLABLE.has(ats)) {
+    console.log(`  ${ats} form — apply.js fills ${[...FILLABLE].join(' and ')}. Open it yourself.`);
     continue;
   }
 
@@ -135,11 +149,12 @@ for (const [i, job] of queue.entries()) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     // networkidle never fires on some Ashby pages (analytics beacons keep the
     // connection warm), so wait for the form itself.
-    await page.waitForSelector('[data-field-path]', { timeout: 30_000 });
+    const sel = formSelectors(ats);
+    await page.waitForSelector(sel.ready, { timeout: 30_000 });
 
     // Resume upload. Target the resume entry specifically — pages can have a
     // second file input for a cover letter, and the bare selector picks the wrong one.
-    const resumeInput = page.locator('[data-field-path="_systemfield_resume"] input[type=file]').first();
+    const resumeInput = page.locator(sel.resume).first();
     if (await resumeInput.count()) {
       await resumeInput.setInputFiles(resumeFile());
       // Ashby parses the resume server-side and backfills name/email on SOME boards.
@@ -150,14 +165,19 @@ for (const [i, job] of queue.entries()) {
       // This was a 15s timeout, and on a board that never backfills it burned all 15
       // every time: measured at 15,002ms of a 20,337ms startup, 74% of the wait
       // before the model was even called. Boards that do backfill do it in ~1s.
+      // Ashby only. Greenhouse does not backfill the form from the uploaded resume
+      // at all, so there is nothing to race and waiting burns RESUME_PARSE_MS for a
+      // message naming the wrong board.
       const waited = Date.now();
-      const backfilled = await page.waitForFunction(
+      const backfilled = ats !== 'ashby' ? false : await page.waitForFunction(
         () => document.querySelector('[data-field-path="_systemfield_name"] input')?.value?.trim(),
         null, { timeout: RESUME_PARSE_MS },
       ).then(() => true).catch(() => false);
-      console.log(backfilled
-        ? `  resume parsed by Ashby in ${Date.now() - waited}ms`
-        : `  (Ashby did not autofill from the resume — using me.json)`);
+      if (ats === 'ashby') {
+        console.log(backfilled
+          ? `  resume parsed by Ashby in ${Date.now() - waited}ms`
+          : `  (Ashby did not autofill from the resume — using me.json)`);
+      }
       record.resumeUploaded = true;
       record.resumeBackfill = backfilled;
     } else {
@@ -169,6 +189,20 @@ for (const [i, job] of queue.entries()) {
     // whether the stated ask would land below what the employer already budgeted.
     await page.evaluate(([me, posting]) => window.__ashby.configure(me, posting),
       [ME, { employmentType: job.employmentType, salary: job.salary ?? null }]);
+
+    // Greenhouse only, and BEFORE the rule pass: the in-page decline cannot open a
+    // react-select menu, so it is done from here with a trusted click. Running it
+    // first leaves those fields non-empty, so the rule pass skips them instead of
+    // trying, failing, and reporting four rules "not applied" that were in fact
+    // already handled. Ashby's are radio groups the rule pass fills by itself.
+    if (ats === 'greenhouse') {
+      record.declined = await declineDemographics(page);
+      for (const d of record.declined) {
+        console.log(d.ok
+          ? `  declined: ${d.label} -> ${d.value}`
+          : `  left empty: ${d.label} (${d.err})`);
+      }
+    }
 
     record.ruleResults = await page.evaluate(() => window.__ashby.fill());
     const ruleOk = record.ruleResults.filter(r => r.ok).length;
@@ -185,7 +219,7 @@ for (const [i, job] of queue.entries()) {
       const { steps } = await ask(
         PLAN_SYSTEM,
         `<job>${job.title} at ${job.slug}\n\n${posting}</job>\n\n<fields>\n${JSON.stringify(fields, null, 1)}\n</fields>`,
-        { schema: Plan, maxTokens: 12_000, documents: [RESUME_DOC] },
+        { schema: Plan, maxTokens: 12_000, documents: [RESUME_DOC], label: 'apply' },
       );
       record.planResults = await page.evaluate(p => window.__ashby.applyPlan(p), normalise(steps));
     } else if (fields.length) {
@@ -215,30 +249,30 @@ for (const [i, job] of queue.entries()) {
   // fall through to "not submitted" and still write the record. Asking first means a
   // failure here would otherwise lose the whole record, which is what the old
   // write-then-ask order protected against.
-  const a = await prompt(
-    '\n  Submitted?  [y] yes · [n] no, move on · [k] not yet, keep it queued · [s] stop here: '
-  ).then(x => String(x).trim().toLowerCase())
-   .catch(() => { console.log('\n  (no answer possible — recording as not submitted)'); return 'n'; });
+  const answer = await prompt(SUBMITTED_PROMPT)
+    .catch(() => { console.log('\n  (no answer possible — recording as not submitted)'); return 'n'; });
+  const { submitted, keep, stop } = answerEffect(answer);
 
-  record.submitted = a === 'y';
+  record.submitted = submitted;
   if (record.submitted) record.submittedAt = new Date().toISOString();
 
   // Written per posting, not at the end of the run. Interrupting a run used to throw
   // away every queue removal, so the next run reopened everything already dealt with.
   fs.appendFileSync(P.log, JSON.stringify(record) + '\n');
 
-  // 'k' leaves it queued for next time; everything else is finished with.
-  if (!ONE_URL && a !== 'k') {
+  // [k] and [s] leave it queued for next time; everything else is finished with.
+  if (!ONE_URL && !keep) {
     const rest = dropFromQueue(readJsonl(P.queue), job.id);
     fs.writeFileSync(P.queue, rest.map(j => JSON.stringify(j)).join('\n') + (rest.length ? '\n' : ''));
     console.log(`  recorded${record.submitted ? ' as submitted' : ''} · ${rest.length} left in the queue`);
-  } else if (a === 'k') {
+  } else if (keep) {
     console.log('  left in the queue for next time');
   }
   done.push(job.id);
 
-  if (a !== 'k') await page.close().catch(() => {});
-  if (a === 's') break;
+  // [k] leaves the tab open to come back to; a stop closes the browser anyway.
+  if (!keep || stop) await page.close().catch(() => {});
+  if (stop) break;
 }
 
 const sent = done.length && fs.existsSync(P.log)

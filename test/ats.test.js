@@ -1,6 +1,7 @@
+import fs from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATS, adapterFor, htmlToText, inferWorkplace } from '../lib/ats.js';
+import { ATS, adapterFor, htmlToText, inferWorkplace, workplaceOf } from '../lib/ats.js';
 
 test('both boards are registered and have distinct hosts', () => {
   assert.deepEqual(Object.keys(ATS).sort(), ['ashby', 'greenhouse']);
@@ -145,4 +146,37 @@ test('postings are pulled out of each response shape', () => {
   assert.deepEqual(ATS.greenhouse.postingsFrom({ jobs: [{ id: 2 }] }), [{ id: 2 }]);
   assert.deepEqual(ATS.ashby.postingsFrom({}), []);
   assert.deepEqual(ATS.greenhouse.postingsFrom(null), []);
+});
+
+// ---- "remote", however it is written ----------------------------------------------
+//
+// The board's "remote only" toggle kept a posting only when workplaceType said Remote.
+// Ashby leaves that field null on many postings — Clera's location is just "remote" —
+// and Greenhouse's inference missed "Jakarta_remote" (an underscore is a word
+// character, so \bremote never matched), "Work Remotely" and "Remotely based".
+
+test('remote written in lowercase, after an underscore, or as "remotely"', () => {
+  assert.equal(inferWorkplace('remote'), 'Remote');
+  assert.equal(inferWorkplace('Ho Chi Minh_remote'), 'Remote');
+  assert.equal(inferWorkplace('Work Remotely'), 'Remote');
+  assert.equal(inferWorkplace('Chicago, IL; Remotely based'), 'Remote');
+  assert.equal(inferWorkplace('REMOTE - US'), 'Remote');
+});
+
+test('words that merely contain "remote" are not remote', () => {
+  assert.equal(inferWorkplace('Remoteville, TX'), null);
+});
+
+test('an explicit workplaceType wins; a null one is inferred from the location', () => {
+  assert.equal(workplaceOf({ workplaceType: null, location: 'remote' }), 'Remote', 'Clera');
+  assert.equal(workplaceOf({ workplaceType: 'OnSite', location: 'San Francisco (remote OK)' }), 'OnSite');
+  assert.equal(workplaceOf({ workplaceType: 'Hybrid', location: 'Remote - US' }), 'Hybrid');
+  assert.equal(workplaceOf({ workplaceType: null, location: 'Austin, TX' }), null);
+  assert.equal(workplaceOf({}), null);
+});
+
+test('the board\'s remote-only filter goes through workplaceOf', () => {
+  const src = fs.readFileSync(new URL('../bin/ui.js', import.meta.url), 'utf8');
+  assert.match(src, /if \(remote && workplaceOf\(c\) !== 'Remote'\) continue;/);
+  assert.doesNotMatch(src, /p\.workplaceType !== 'Remote'/);
 });
