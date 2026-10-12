@@ -15,10 +15,11 @@
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
 import { corpus, hash, linesOf } from '../lib/corpus.js';
+import { describe } from '../lib/descriptions.js';
 import { resumeText } from '../lib/resume-text.js';
 import { progress } from '../lib/progress.js';
 import { pool, jobsFlag } from '../lib/pool.js';
-import { isAuthError, requireKey } from '../lib/keys.js';
+import { isFatal, requireKey } from '../lib/keys.js';
 import { appendRows } from '../lib/jsonl.js';
 import { jevAsk } from '../lib/jev.js';
 import { fitnessRequest, worklistWork, rescoreWork, fitnessRow } from '../lib/jev-fitness.js';
@@ -46,13 +47,14 @@ const resumeHash = hash(resume);
 const done = rowsOf(P.jevFitness);
 
 // The worklist is fresh.jsonl, like any scorer's. --rescore instead walks every
-// posting already scored, reading its description from the corpus.
+// posting already scored, from the corpus. Either way the text comes from
+// descriptions.jsonl, one posting at a time — the worklist carries none.
 const { work, blank, reuse } = RESCORE
-  ? rescoreWork(done, corpus(), resumeHash, { hash, force: FORCE })
-  : worklistWork(rowsOf(P.fresh), done, resumeHash, { hash, force: FORCE });
+  ? rescoreWork(done, corpus(), resumeHash, { hash, force: FORCE, describe })
+  : worklistWork(rowsOf(P.fresh), done, resumeHash, { hash, force: FORCE, describe });
 const todo = work.slice(0, LIMIT);
 
-const chars = todo.reduce((n, w) => n + Math.min(String(w.posting.descriptionPlain ?? w.posting.description).length, 60_000) + resume.length, 0);
+const chars = todo.reduce((n, w) => n + Math.min(w.chars, 60_000) + resume.length, 0);
 const tokens = Math.round(chars / 4) + todo.length * 150;
 console.log(`${work.length} posting${work.length === 1 ? '' : 's'} to score` +
   (RESCORE ? ' again (older answers)' : ' from fresh.jsonl') +
@@ -73,13 +75,14 @@ try { requireKey('JEV_API_KEY'); } catch (e) { console.error(`\n${e.message}`); 
 let spent = 0, scored = 0;
 const bar = progress(todo.length, 'fitness');
 const results = await pool(todo, async (w) => {
-  const { state, questions } = fitnessRequest(w.posting, resume);
+  // Read again here rather than held from the split: 225,000 of them is ~2.5 GB.
+  const { state, questions } = fitnessRequest({ ...w.posting, descriptionPlain: describe(w.posting) }, resume);
   const res = await jevAsk({ state, questions });
   spent += res.usage?.input_tokens ?? 0;
   // Written as it lands: an interrupted run keeps every answer it paid for.
   appendRows(P.jevFitness, [fitnessRow(w, resumeHash, res)]);
   scored++;
-}, { limit: JOBS, onDone: () => bar.tick(), stopOn: isAuthError });
+}, { limit: JOBS, onDone: () => bar.tick(), stopOn: isFatal });
 
 if (results.stopped) {
   // Left where it stopped, rather than a full bar claiming work that never happened.

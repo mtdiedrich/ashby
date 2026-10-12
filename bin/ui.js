@@ -29,12 +29,14 @@ import { P } from '../lib/paths.js';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tidy } from '../lib/text.js';
-import { corpus, asPosting } from '../lib/corpus.js';
-import { wantedTitle, usLocation } from '../lib/filters.js';
+import { corpus, asPosting, hash, embedText, linesOf } from '../lib/corpus.js';
+import { inUS, worklistRow } from '../lib/select.js';
 import { appliedIds, openedIds } from '../lib/applog.js';
 import { adapterFor, postingUrl, workplaceOf } from '../lib/ats.js';
 import { summaryOf, detailOf, byValue, payForRow } from '../lib/board-row.js';
-import { payFromText } from '../lib/pay-text.js';
+import { statedPay } from '../lib/pay-text.js';
+import { describe, splitRecord } from '../lib/descriptions.js';
+import { appendRows } from '../lib/jsonl.js';
 import { estimatesById } from '../lib/levels.js';
 import { composite } from '../lib/composite.js';
 import { salaryOf } from '../lib/comp.js';
@@ -43,9 +45,20 @@ const argv = process.argv.slice(2);
 const PORT = argv.includes('--port') ? Number(argv[argv.indexOf('--port') + 1]) : 7777;
 const OPEN = !argv.includes('--no-open');
 
-const read = f => fs.existsSync(f)
-  ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean)
-  : [];
+// Parsed rows per file, cached on size and mtime. fresh.jsonl is every unscored
+// posting — 225,000 rows, 122 MB — and re-parsing it and jev-fitness.jsonl on every
+// request was most of a five-second board load. Callers must not mutate the result.
+const readCache = new Map();
+function read(f) {
+  if (!fs.existsSync(f)) return [];
+  const st = fs.statSync(f), sig = `${st.size}:${st.mtimeMs}`;
+  const hit = readCache.get(f);
+  if (hit?.sig === sig) return hit.rows;
+  const rows = [];
+  for (const l of linesOf(f)) { try { rows.push(JSON.parse(l)); } catch {} }
+  readCache.set(f, { sig, rows });
+  return rows;
+}
 const writeJsonl = (f, rows) =>
   fs.writeFileSync(f, rows.map(r => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : ''));
 
@@ -71,12 +84,12 @@ function corpusCached() {
   return ccache.map;
 }
 
-// Pay stated in a description, parsed once per corpus record. Keyed on the record
-// object, so it lives exactly as long as corpusCached() keeps that record — a new
-// corpus brings new objects and the old answers go with the old ones.
+// Pay stated in a description. Crawl reads it once into the row's `descPay`; a row
+// from before that is parsed here, once, keyed on the record object so it lives
+// exactly as long as corpusCached() keeps that record.
 const textPayCache = new WeakMap();
 function textPayOf(c) {
-  if (!textPayCache.has(c)) textPayCache.set(c, payFromText(c.description));
+  if (!textPayCache.has(c)) textPayCache.set(c, statedPay(c));
   return textPayCache.get(c);
 }
 
@@ -84,7 +97,7 @@ function textPayOf(c) {
 // The default limit covers the whole filtered candidate set (about 2,900) rather
 // than truncating it. A lean row is ~340 bytes, so all of them is under a megabyte —
 // which is only affordable because descriptions moved to /api/detail.
-function board({ all = false, us = false, remote = false, scoredOnly = false, limit = 5000 } = {}) {
+function board({ remote = false, scoredOnly = false, limit = 5000 } = {}) {
   const corp = corpusCached();
 
   const queued = new Set(read(P.queue).map(r => r.id));
@@ -110,9 +123,9 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
     if (!c) continue;
     const p = asPosting(c, salaryOf);
 
-    if (!all && !wantedTitle(p.title)) continue;
     if (remote && workplaceOf(c) !== 'Remote') continue;
-    if (us && !usLocation(p.location, [p.location, p.secondaryLocations].filter(Boolean).join(' | '))) continue;
+    // Non-US roles are not scored and not shown — the same rule as the worklist.
+    if (!inUS(c)) continue;
 
     const f = jevFit.get(id);
     if (scoredOnly && !f) continue;
@@ -135,7 +148,6 @@ function board({ all = false, us = false, remote = false, scoredOnly = false, li
       fillable: (c.ats ?? 'ashby') === 'ashby',
       // The posting's pay field, else pay its description states, else an estimate.
       ...payForRow(p.salary?.summary ?? null, p.salary ? null : textPayOf(c), estimates.get(id)),
-      description: tidy(c.description ?? ''),
 
       // null, not 0 — "not computed" and "computed as zero" are different facts.
 
@@ -181,19 +193,20 @@ async function stage(id) {
   if (!c) return { ok: false, error: 'not in the corpus' };
   if (read(P.fresh).some(r => r.id === id)) return { ok: true, already: true };
 
-  // The crawl keeps descriptions only for titles a scorer could see. Staging anything
-  // else has to fetch one first — scoring an empty description would produce a
+  // The crawl stores every description, but one not crawled since the store existed
+  // may have none. Fetch it first — scoring an empty description would produce a
   // confident number about nothing, which is worse than refusing.
-  let full = c;
-  if (c.descriptionStored === false) {
-    const fetched = await fetchDescription(c);
-    if (!fetched) return { ok: false, error: 'could not fetch the description for that posting' };
-    full = fetched;
+  let fetched = false;
+  if (!describe(c).trim()) {
+    const full = await fetchDescription(c);
+    if (!full) return { ok: false, error: 'could not fetch the description for that posting' };
+    full.hash = hash(embedText(full));
+    appendRows(P.descriptions, [splitRecord(full).desc]);
+    fetched = true;
   }
 
-  const line = JSON.stringify(asPosting(full, salaryOf)) + '\n';
-  fs.appendFileSync(P.fresh, line);
-  return { ok: true, fetched: full !== c };
+  appendRows(P.fresh, [worklistRow(c)]);
+  return { ok: true, fetched };
 }
 
 /**
@@ -253,8 +266,6 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url.startsWith('/api/board')) {
     const q = new URL(req.url, 'http://x').searchParams;
     return send(200, 'application/json', JSON.stringify(board({
-      all: q.get('all') === '1',
-      us: q.get('us') === '1',
       remote: q.get('remote') === '1',
       scoredOnly: q.get('scored') === '1',
       limit: Math.min(Number(q.get('limit')) || 5000, 20000),
@@ -271,7 +282,7 @@ const server = http.createServer((req, res) => {
 
     const p = asPosting(c, salaryOf);
     return send(200, 'application/json', JSON.stringify(detailOf({
-      description: tidy(c.description ?? ''),
+      description: tidy(describe(c)),
       // The sentence the pay column's figure came from, when it came from the text.
       payText: p.salary ? null : (textPayOf(c)?.text ?? null),
       applyUrl: p.applyUrl, jobUrl: p.jobUrl,

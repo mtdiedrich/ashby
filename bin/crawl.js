@@ -7,21 +7,23 @@
 // Two ATSes, one corpus. Everything board-specific — endpoint, response shape,
 // record conversion — lives in lib/ats.js; this file only does the fetching.
 //
-// This is deliberately not poll.js. poll.js applies title/location/pay filters and
-// only ever emits things it has not judged before, because its output costs a model
-// call each. The corpus is the opposite: everything, so the embedding ranker can
-// surface a role whose title none of poll.js's regexes would ever match.
+// poll.js runs this, then stages whatever is not yet scored.
 //
-// corpus.jsonl is keyed by posting id. A posting whose description has changed is
-// appended again with a new fetchedAt; readers take the newest. Embedding uses a
-// content hash, so a re-listed but unchanged posting is never re-embedded.
+// corpus.jsonl is keyed by posting id and holds metadata; every description goes to
+// descriptions.jsonl (lib/descriptions.js). A posting whose content has changed is
+// appended again with a new fetchedAt; readers take the newest. A posting its board
+// no longer lists — a board that answered — is closed and dropped from both
+// (closedIds). Fitness answers are keyed by content, so a re-listed but unchanged
+// posting is never asked about twice.
 
 import fs from 'node:fs';
 import { P } from '../lib/paths.js';
-import { corpusAndCount, embedText, hash, compactCorpus } from '../lib/corpus.js';
+import { corpusAndCount, embedText, hash, compactCorpus, closedIds, boardKey } from '../lib/corpus.js';
+import { appendRows, dropRows } from '../lib/jsonl.js';
+import { descriptionIndex, descriptionStats, splitRecord, compactDescriptions } from '../lib/descriptions.js';
 import { progress } from '../lib/progress.js';
 import { jobsFlag } from '../lib/pool.js';
-import { ATS, keepDescription } from '../lib/ats.js';
+import { ATS } from '../lib/ats.js';
 import { fetchPatient } from '../lib/fetch.js';
 
 // Boards are fetched a few at a time. 12 matches what harvest.js already uses
@@ -29,9 +31,6 @@ import { fetchPatient } from '../lib/fetch.js';
 // someone else's free endpoint and 3,800 boards is already a lot to ask of it.
 const CONCURRENCY = jobsFlag(process.argv, 12);
 const STATS_ONLY = process.argv.includes('--stats');
-// --full stores every description, the way this worked before the corpus reached
-// 380 MB. Expect roughly a gigabyte per 170,000 postings.
-const FULL = process.argv.includes('--full');
 // Rewrite the corpus dropping superseded rows, and stop. Normally automatic, but
 // worth having by hand after a change that rewrote a lot of records.
 const COMPACT_ONLY = process.argv.includes('--compact');
@@ -93,8 +92,12 @@ if (!work.length) {
 // it works.
 const { map: known, lines: linesBefore } = corpusAndCount();
 const now = new Date().toISOString();
-const added = [];
-let ok = 0, dead = 0, seenTotal = 0, unchanged = 0;
+let ok = 0, dead = 0, seenTotal = 0, unchanged = 0, changed = 0, described = 0;
+const newIds = new Set();
+// Every board that answered, and what it listed — what closure is judged against.
+const boards = new Map();
+// What descriptions.jsonl already holds, by id and content hash.
+const stored = descriptionIndex();
 
 async function crawlSlug(ats, slug) {
   let body;
@@ -108,19 +111,32 @@ async function crawlSlug(ats, slug) {
 
   const jobs = ats.postingsFrom(body);
   ok++; seenTotal += jobs.length;
+  const seen = new Set(), rows = [], texts = [];
 
   for (const j of jobs) {
-    // Descriptions are 96.5% of the corpus and 3.6% of it is ever scored. Metadata
-    // is kept for every posting so the board still lists it; the description is kept
-    // only for titles a scorer could see, and fetched on demand for anything else.
-    const descriptions = FULL || keepDescription(j.title);
-    const rec = ats.normalize(j, slug, now, { descriptions });
+    // Every description is kept — the title filter that decided which was dropped on
+    // 2026-10-03. The text goes to descriptions.jsonl and the corpus row is metadata;
+    // see lib/descriptions.js for why they are separate.
+    const rec = ats.normalize(j, slug, now);
     rec.hash = hash(embedText(rec));
+    seen.add(rec.id);
+    const { meta, desc } = splitRecord(rec);
+
+    // Checked on its own, not through the corpus row: a posting whose row is
+    // unchanged may still have no stored text — every row written before the store.
+    if (stored.get(rec.id)?.hash !== rec.hash) texts.push(desc);
 
     const prev = known.get(rec.id);
     if (prev && prev.hash === rec.hash) { unchanged++; continue; }
-    added.push(rec);
+    if (prev) changed++; else newIds.add(rec.id);
+    rows.push(meta);
   }
+  // Written per board, as it lands. Holding every row for one write at the end is
+  // what has lost work in this project before, and with every description in it the
+  // run would hold ~2.5 GB of them.
+  if (texts.length) described += appendRows(P.descriptions, texts);
+  if (rows.length) appendRows(P.corpus, rows);
+  boards.set(boardKey({ ats: ats.id, company: slug }), seen);
 }
 
 // 10,000 boards is four and a half minutes. Saying nothing for four and a half
@@ -136,18 +152,25 @@ await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
 }));
 bar.finish();
 
-if (added.length) {
-  fs.appendFileSync(P.corpus, added.map(r => JSON.stringify(r)).join('\n') + '\n');
-}
+// Closed: on a board that answered, and not listed by it. These leave the corpus and
+// the derived files that would keep them on the board or the worklist. Fitness rows
+// stay — they are keyed by content too, and a re-listing reuses them. The log,
+// queue and dismissals are history and are never touched.
+const closed = closedIds(known, boards);
 
 // Derived from what this run already knows rather than re-read from disk.
-const fresh = added.filter(r => !known.has(r.id)).length;
-const liveNow = known.size + fresh;
-const linesNow = linesBefore + added.length;
+const fresh = newIds.size;
+const liveNow = known.size + fresh - closed.size;
+const linesNow = linesBefore + fresh + changed;
 
 console.log(`${ok} boards ok, ${dead} dead, ${seenTotal} postings seen`);
-console.log(`  ${fresh} new, ${added.length - fresh} changed, ${unchanged} unchanged`);
+console.log(`  ${fresh} new, ${changed} changed, ${unchanged} unchanged, ${closed.size} closed`);
+console.log(`  ${described.toLocaleString()} descriptions stored`);
 console.log(`  corpus.jsonl now holds ${liveNow.toLocaleString()} postings`);
+if (closed.size) {
+  const f = dropRows(P.fresh, closed), e = dropRows(P.payEstimates, closed);
+  if (f || e) console.log(`  closed postings dropped from fresh.jsonl (${f}) and pay-estimates.jsonl (${e})`);
+}
 
 // The corpus is append-only, so a re-crawl that changes many postings at once leaves
 // every superseded row behind. One storage-policy change rewrote 60,903 of them, the
@@ -156,10 +179,23 @@ console.log(`  corpus.jsonl now holds ${liveNow.toLocaleString()} postings`);
 // approaching that limit — whichever comes first.
 {
   const bytes = fs.existsSync(P.corpus) ? fs.statSync(P.corpus).size : 0;
-  if (linesNow > liveNow * 1.25 || bytes > 0x1fffffe8 * 0.75) {
+  // Closed postings are dropped by the same rewrite, so any closure forces one.
+  if (closed.size || linesNow > liveNow * 1.25 || bytes > 0x1fffffe8 * 0.75) {
     process.stderr.write(`  compacting ${linesNow.toLocaleString()} rows down to ${liveNow.toLocaleString()} postings... `);
-    const r = compactCorpus();
+    const r = compactCorpus({ drop: closed });
     process.stderr.write(`${(r.bytesBefore / 1048576).toFixed(0)} MB → ${(r.bytesAfter / 1048576).toFixed(0)} MB\n`);
   }
 }
-if (added.length) console.log(`\nNext: npm run fitness`);
+// The description store is append-only too, and holds closed postings until it is
+// rewritten. Same rule as the corpus: any closure, or a quarter of dead rows.
+{
+  const { rows, ids } = descriptionStats();
+  if (closed.size || rows > ids * 1.25) {
+    const live = new Set([...known.keys(), ...newIds]);
+    for (const id of closed) live.delete(id);
+    process.stderr.write(`  compacting descriptions.jsonl, ${rows.toLocaleString()} rows... `);
+    const r = compactDescriptions({ keep: live });
+    process.stderr.write(`${r.after.toLocaleString()} kept, ${(r.bytesBefore / 1048576).toFixed(0)} MB → ${(r.bytesAfter / 1048576).toFixed(0)} MB\n`);
+  }
+}
+if (fresh + changed) console.log(`\nNext: npm run fitness`);

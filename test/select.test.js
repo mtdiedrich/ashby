@@ -6,39 +6,50 @@ import { corpusRecord, comp } from './helpers.js';
 const asMap = (...recs) => new Map(recs.map(r => [r.id, r]));
 const ids = rows => rows.map(r => r.id).sort();
 
-test('returns matching postings in the shape the scorers read', () => {
+test('returns postings in the shape the scorers read, without the description', () => {
   const c = asMap(corpusRecord({ id: 'a' }));
   const [row] = candidates(c, {});
-  // corpus uses company/description/compensation; scorers read slug/descriptionPlain/salary
+  // corpus uses company/compensation; scorers read slug/salary
   assert.equal(row.slug, 'acme');
-  assert.equal(row.descriptionPlain, 'Train and serve models.');
   assert.ok('salary' in row);
   assert.equal(row.id, 'a');
+  // The worklist is every unscored posting — ~225,000 of them. Carrying descriptions
+  // made it 1.3 GB; the scorer reads each from descriptions.jsonl when it asks.
+  assert.equal('descriptionPlain' in row, false);
 });
 
-test('drops titles that are not the job', () => {
-  const c = asMap(
-    corpusRecord({ id: 'keep', title: 'ML Engineer' }),
-    corpusRecord({ id: 'drop', title: 'Machine Learning Intern' }),
-    corpusRecord({ id: 'drop2', title: 'Backend Engineer' }),
-  );
-  assert.deepEqual(ids(candidates(c, {})), ['keep']);
-});
-
-test('--all keeps every title', () => {
+test('every title is a candidate — there is no title filter', () => {
   const c = asMap(
     corpusRecord({ id: 'a', title: 'ML Engineer' }),
-    corpusRecord({ id: 'b', title: 'Office Manager' }),
+    corpusRecord({ id: 'b', title: 'Machine Learning Intern' }),
+    corpusRecord({ id: 'c', title: 'Office Manager' }),
   );
-  assert.deepEqual(ids(candidates(c, { all: true })), ['a', 'b']);
+  assert.deepEqual(ids(candidates(c, {})), ['a', 'b', 'c']);
 });
 
-test('drops postings abroad when us is set', () => {
+test('only US postings are candidates — non-US roles are not scored', () => {
   const c = asMap(
     corpusRecord({ id: 'sf', location: 'San Francisco' }),
+    corpusRecord({ id: 'stl', location: 'St. Louis, MO' }),
+    corpusRecord({ id: 'remote', location: 'Remote' }),
     corpusRecord({ id: 'ldn', location: 'London' }),
+    corpusRecord({ id: 'blr', location: 'Bengaluru, India' }),
   );
-  assert.deepEqual(ids(candidates(c, { us: true })), ['sf']);
+  assert.deepEqual(ids(candidates(c, {})), ['remote', 'sf', 'stl']);
+});
+
+test('stated pay does not exclude a posting', () => {
+  const c = asMap(
+    corpusRecord({ id: 'rich', compensation: comp(200000, 300000) }),
+    corpusRecord({ id: 'poor', compensation: comp(80000, 120000) }),
+  );
+  assert.deepEqual(ids(candidates(c, { minPay: 150000 })), ['poor', 'rich']);
+});
+
+test('age does not exclude a posting', () => {
+  const old = new Date(Date.now() - 400 * 86400000).toISOString();
+  const c = asMap(corpusRecord({ id: 'new' }), corpusRecord({ id: 'old', publishedAt: old }));
+  assert.deepEqual(ids(candidates(c, { maxAgeDays: 90 })), ['new', 'old']);
 });
 
 test('skips anything already scored on every front', () => {
@@ -55,26 +66,6 @@ test('being staged does not exclude a posting — only being finished does', () 
 test('skips anything dismissed', () => {
   const c = asMap(corpusRecord({ id: 'a' }), corpusRecord({ id: 'b' }));
   assert.deepEqual(ids(candidates(c, { dismissed: new Set(['a']) })), ['b']);
-});
-
-test('drops postings whose stated pay tops out below the floor', () => {
-  const c = asMap(
-    corpusRecord({ id: 'rich', compensation: comp(200000, 300000) }),
-    corpusRecord({ id: 'poor', compensation: comp(80000, 120000) }),
-    corpusRecord({ id: 'silent', compensation: null }),
-  );
-  // Unstated pay passes on purpose — that was in the spec and stays.
-  assert.deepEqual(ids(candidates(c, { minPay: 150000 })), ['rich', 'silent']);
-});
-
-test('maxAgeDays drops stale postings, and 0 disables the check', () => {
-  const old = new Date(Date.now() - 200 * 86400000).toISOString();
-  const c = asMap(
-    corpusRecord({ id: 'new' }),
-    corpusRecord({ id: 'old', publishedAt: old }),
-  );
-  assert.deepEqual(ids(candidates(c, { maxAgeDays: 90 })), ['new']);
-  assert.deepEqual(ids(candidates(c, { maxAgeDays: 0 })), ['new', 'old']);
 });
 
 test('newest postings come first', () => {

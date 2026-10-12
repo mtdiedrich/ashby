@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { salaryOf, payPasses } from '../lib/comp.js';
+import { salaryOf } from '../lib/comp.js';
 import { posting, comp } from './helpers.js';
 
 test('salaryOf returns null when no compensation is published', () => {
@@ -35,26 +35,4 @@ test('unknown currency reports the raw numbers but no USD comparison', () => {
   const s = salaryOf(posting({ compensation: comp(100, 200, { currency: 'XYZ' }) }));
   assert.equal(s.max, 200);
   assert.equal(s.annualUsdMax, null);
-});
-
-test('payPasses lets unstated pay through, and says it is unknown', () => {
-  const r = payPasses(posting({ compensation: null }), 150000);
-  assert.equal(r.pass, true);
-  assert.equal(r.known, false);
-});
-
-test('payPasses compares against the top of a stated range', () => {
-  // $120k-$180k against a $150k floor: the top clears, so it passes.
-  const r = payPasses(posting({ compensation: comp(120000, 180000) }), 150000);
-  assert.equal(r.pass, true);
-  assert.equal(r.known, true);
-});
-
-test('payPasses rejects when even the top of the range is below the floor', () => {
-  const r = payPasses(posting({ compensation: comp(80000, 120000) }), 150000);
-  assert.equal(r.pass, false);
-});
-
-test('a floor of 0 never rejects', () => {
-  assert.equal(payPasses(posting({ compensation: comp(10, 20) }), 0).pass, true);
 });

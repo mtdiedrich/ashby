@@ -124,3 +124,27 @@ test('the fitness command writes re-listing copies, before its "nothing to do" e
   const exit = src.indexOf('nothing to do');
   assert.ok(exit > 0 && write < exit, 'a run whose only work is re-listings still has work');
 });
+
+// The worklist carries no descriptions — ~225,000 of them were 1.3 GB — so the text
+// comes from descriptions.jsonl through `describe`, once to hash and once to ask.
+test('worklist: the description comes from describe, and work items do not hold it', () => {
+  const store = { a: 'stored text', b: '' };
+  const describe = p => store[p.id] ?? '';
+  const hash = s => 'H(' + s + ')';
+  const fresh = [{ id: 'a', title: 'T', slug: 'co', location: 'L' }, { id: 'b', title: 'T', slug: 'co' }];
+  const { work, blank } = worklistWork(fresh, [], 'rh', { hash, describe });
+  assert.deepEqual(work.map(w => w.id), ['a']);
+  assert.deepEqual(blank.map(w => w.id), ['b']);
+  assert.equal(work[0].jdHash, hash(jdTextOf({ ...fresh[0], descriptionPlain: 'stored text' })),
+    'hashed over the same text as before, so the answers already paid for still match');
+  assert.equal(work[0].chars, 'stored text'.length);
+  const { jdHash, ...held } = work[0];        // the fake hash above embeds its input
+  assert.equal(JSON.stringify(held).includes('stored text'), false, 'not held for the whole run');
+});
+
+test('rescore reads descriptions through describe too', () => {
+  const fit = [{ id: 'a', key: 'old', at: '1' }];
+  const corpus = new Map([['a', { id: 'a', title: 'A', company: 'co' }]]);
+  const { work, blank } = rescoreWork(fit, corpus, 'rh', { hash: s => s, describe: () => 'from the store' });
+  assert.deepEqual([work.map(w => w.id), blank.length], [['a'], 0]);
+});

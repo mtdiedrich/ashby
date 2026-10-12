@@ -121,9 +121,7 @@
 <header>
   <h1>ashby <span id="stamp"></span></h1>
   <div class="bar">
-    <button class="tab" data-f="us"     aria-pressed="true">US only</button>
     <button class="tab" data-f="remote" aria-pressed="false">remote only</button>
-    <button class="tab" data-f="all"    aria-pressed="false">include non-ML titles</button>
     <button class="tab" data-f="scored" aria-pressed="false">scored only</button>
     <input type="search" id="q" placeholder="filter by title, company, team…">
     <button class="tab" id="refresh">refresh</button>
@@ -162,7 +160,7 @@ let JOBS = [], TOTAL = 0, term = "", sortKey = "value", sortDir = -1, limit = 50
 // different ordering than the page displayed and hid every fresh posting.)
 const PAINT_STEP = 300;
 let painted = PAINT_STEP;
-const opts = { us: true, remote: false, all: false, scored: false };
+const opts = { remote: false, scored: false };
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 const cls = n => n == null ? 'none' : n >= 0.6 ? 's-hi' : n >= 0.3 ? 's-mid' : 's-lo';
@@ -179,7 +177,7 @@ function parseTop(s) {
 
 async function load() {
   const q = new URLSearchParams({ limit: String(limit) });
-  for (const k of ['us', 'remote', 'all', 'scored']) if (opts[k]) q.set(k, '1');
+  for (const k of ['remote', 'scored']) if (opts[k]) q.set(k, '1');
 
   let d;
   try { d = await (await fetch('/api/board?' + q)).json(); }
@@ -441,8 +439,6 @@ for (const t of document.querySelectorAll('.tab[data-f]')) {
   t.addEventListener('click', () => {
     const k = t.dataset.f;
     opts[k] = !opts[k];
-    if (opts[k] && k === 'us') opts.remote = false;
-    if (opts[k] && k === 'remote') opts.us = false;
     for (const o of document.querySelectorAll('.tab[data-f]')) o.setAttribute('aria-pressed', String(!!opts[o.dataset.f]));
     limit = 5000;
     load();
