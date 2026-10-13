@@ -164,3 +164,12 @@ test('nothing of requirement coverage rides on a row or in the pane', () => {
     assert.equal(HEAVY.includes(k), false, k);
   }
 });
+
+// Two answers since 2026-10-12: the table draws both, so both ride on the summary —
+// as null when not yet asked, never as a missing key the page renders "undefined".
+test('the summary carries alignment beside fitness, null when not yet asked', () => {
+  assert.equal(summaryOf({ ...row(), alignment: 0.7 }).alignment, 0.7);
+  const s = summaryOf({ id: 'x' });
+  assert.ok('alignment' in s);
+  assert.equal(s.alignment, null);
+});

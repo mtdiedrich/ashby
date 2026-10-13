@@ -16,13 +16,13 @@ const job = (id, o) => ({
   fresh: null, value: null, daysLive: 1, met: 1, reqTotal: 2, ...o,
 });
 const JOBS = [
-  job('a', { fitness: 0.4, fresh: 1.0, value: 0.95 }),
-  job('b', { fitness: 0.6, fresh: 0.5, value: 0.50 }),
-  job('c', { fitness: 0.9, fresh: 0.1, value: 0.20 }),
+  job('a', { fitness: 0.4, alignment: 0.8, fresh: 1.0, value: 0.95 }),
+  job('b', { fitness: 0.6, alignment: 0.3, fresh: 0.5, value: 0.50 }),
+  job('c', { fitness: 0.9, fresh: 0.1, value: 0.20 }),      // one-question answer: no alignment yet
   job('d', {}),                                             // nothing scored yet
 ];
 const BOARD = { jobs: JOBS, total: JOBS.length,
-  counts: { fitness: 3, value: 3, queued: 0, applied: 0 } };
+  counts: { fitness: 3, alignment: 2, value: 3, queued: 0, applied: 0 } };
 
 let browser;
 before(async () => { browser = await chromium.launch({ headless: true }); });
@@ -49,7 +49,7 @@ async function setBound(page, key, which, value) {
 
 test('every numeric column has a min and a max', async () => {
   const page = await board();
-  for (const k of ['fitness', 'fresh', 'value']) {
+  for (const k of ['fitness', 'alignment', 'fresh', 'value']) {
     for (const b of ['min', 'max']) {
       assert.equal(await page.locator(`input.rng[data-k="${k}"][data-b="${b}"]`).count(), 1, `${k} ${b}`);
     }
@@ -170,11 +170,28 @@ test('no score or coverage column; fitness has a range bound', async () => {
 
 // ---- the FITNESS column -------------------------------------------------------------
 
-test('FITNESS is the first column, before fresh and value', async () => {
+// Two answers since 2026-10-12: qualified (resume → role) and aligned (role → resume).
+test('qualified and aligned are the first columns, before fresh and value', async () => {
   const page = await board();
   const heads = await page.$$eval('thead tr:first-child th', ths => ths.map(t => t.dataset.s));
-  assert.deepEqual(heads.slice(0, 3), ['fitness', 'fresh', 'value']);
-  assert.match(await page.locator('thead th[data-s="fitness"]').innerText(), /fitness/i);
+  assert.deepEqual(heads.slice(0, 4), ['fitness', 'alignment', 'fresh', 'value']);
+  assert.match(await page.locator('thead th[data-s="fitness"]').innerText(), /qualified/i);
+  assert.match(await page.locator('thead th[data-s="alignment"]').innerText(), /aligned/i);
+  await page.close();
+});
+
+test('a row shows its alignment, and a dash where it has not been asked', async () => {
+  const page = await board();
+  const second = id => page.locator(`tr.r[data-id="${id}"] td`).nth(1);
+  assert.equal((await second('a').innerText()).trim(), '0.80');
+  assert.equal((await second('c').innerText()).trim(), '—', 'a one-question answer has no alignment');
+  await page.close();
+});
+
+test('an alignment minimum hides rows below it, and rows not yet asked', async () => {
+  const page = await board();
+  await setBound(page, 'alignment', 'min', 0.5);
+  assert.deepEqual(await ids(page), ['a']);
   await page.close();
 });
 

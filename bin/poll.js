@@ -24,6 +24,7 @@ import { spawnSync } from 'node:child_process';
 import { P, ensureDirs } from '../lib/paths.js';
 import { corpus, linesOf } from '../lib/corpus.js';
 import { candidates, finished } from '../lib/select.js';
+import { answeredIds } from '../lib/jev-fitness.js';
 
 const argv    = process.argv.slice(2);
 const NOCRAWL = argv.includes('--no-crawl');
@@ -52,10 +53,11 @@ if (!NOCRAWL) {
 
 const store = corpus();
 
-// Finished means scored on every front — Jev's fitness, the only one since
-// 2026-10-02. A posting without it is still work, and must stay on the worklist; the
-// scorer reads only fresh.jsonl, so dropping it here makes the gap permanent.
-const withFitness = new Set(read(P.jevFitness).map(r => r.id));
+// Finished means scored on every front — Jev's two questions, asked together since
+// 2026-10-12. A posting without both is still work, and must stay on the worklist; the
+// scorer reads only fresh.jsonl, so dropping it here makes the gap permanent. A
+// one-question answer from before then does not count (answeredIds).
+const withFitness = answeredIds(read(P.jevFitness));
 const done = finished({ fitness: withFitness });
 const dismissed = new Set(read(P.dismissed).map(r => r.id));
 
@@ -64,7 +66,7 @@ const picked = candidates(store, { done, dismissed }).slice(0, LIMIT);
 // Every front finished() checks is reported. Printing fewer is what once let a
 // missing score strand a posting unnoticed.
 console.log(`${store.size} in the corpus · ` +
-            `${withFitness.size} with fitness · ` +
+            `${withFitness.size} with both answers · ` +
             `${done.size} finished` +
             (dismissed.size ? ` · ${dismissed.size} dismissed` : ''));
 console.log(`${picked.length} posting${picked.length === 1 ? '' : 's'} still to score\n`);

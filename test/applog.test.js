@@ -104,3 +104,29 @@ test('the prompt lists each answer on its own line, in order', () => {
     '[s] stop here, keep in queue',
   ]);
 });
+
+// Pressing "u" at the prompt was read as [n]: the posting was logged as not submitted
+// and dropped from the queue, and two postings the user had picked were lost to a
+// typo. An answer that is not one of the four is not an answer.
+test('an unrecognised key is no answer at all — not [n]', () => {
+  for (const a of ['u', 'x', 'yes', 'no', '', '   ', '\n', 'nn', '1'])
+    assert.equal(answerEffect(a), null, JSON.stringify(a));
+});
+
+test('askSubmitted asks again, saying why, until it gets a valid key', async () => {
+  const { askSubmitted } = await import('../lib/applog.js');
+  const replies = ['u', '', 'K'];
+  const asked = [], said = [];
+  const effect = await askSubmitted(q => { asked.push(q); return Promise.resolve(replies.shift()); }, m => said.push(m));
+  assert.deepEqual(effect, answerEffect('k'));
+  assert.equal(asked.length, 3, 'asked until valid');
+  assert.match(said[0], /"u".*not valid/i);
+  assert.match(said[1], /not valid/i);
+});
+
+test('askSubmitted falls back to "not submitted" only when no answer is possible', async () => {
+  // stdin closed or piped: there is no one to ask, and the record must still be written.
+  const { askSubmitted } = await import('../lib/applog.js');
+  const effect = await askSubmitted(() => Promise.reject(new Error('closed')), () => {});
+  assert.deepEqual(effect, answerEffect('n'));
+});
